@@ -1,8 +1,11 @@
 import type { Feature, FeatureCollection } from 'geojson';
 import type { LonLat } from './geo';
 
-/** Cercle de précision + position + point au droit sur la ligne, pour la carte. */
-export function meFeatures(at: LonLat, accuracy: number, snap: LonLat | null): FeatureCollection {
+/**
+ * Cercle de précision + position + point au droit sur la ligne, pour la carte.
+ * `gps` : vraie position du téléphone (le faisceau de direction s'affiche), pas un point placé à la main.
+ */
+export function meFeatures(at: LonLat, accuracy: number, snap: LonLat | null, gps = true): FeatureCollection {
   const ring: LonLat[] = [];
   const r = Math.max(accuracy, 2);
   const kx = 111320 * Math.cos((at[1] * Math.PI) / 180);
@@ -12,7 +15,7 @@ export function meFeatures(at: LonLat, accuracy: number, snap: LonLat | null): F
   }
   const features: Feature[] = [
     { type: 'Feature', properties: { role: 'accuracy' }, geometry: { type: 'Polygon', coordinates: [ring] } },
-    { type: 'Feature', properties: { role: 'me' }, geometry: { type: 'Point', coordinates: at } },
+    { type: 'Feature', properties: { role: 'me', gps }, geometry: { type: 'Point', coordinates: at } },
   ];
   if (snap) {
     features.push(

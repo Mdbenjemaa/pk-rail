@@ -9,6 +9,9 @@ export interface Fix {
   time: number;
   /** Heure à laquelle le téléphone l'a donnée à l'appli (ms, horloge du téléphone) : pour savoir si le GPS s'est tu. */
   received: number;
+  /** Direction de déplacement (degrés depuis le nord) et vitesse (m/s) annoncées par le GPS, si connues. */
+  course?: number | null;
+  speed?: number | null;
 }
 
 export interface Sample {
@@ -125,11 +128,15 @@ export function acquire(
  * Position reçue pendant le suivi. L'heure de la mesure sert au lissage du PK ; si elle est très
  * différente de l'horloge du téléphone (horloge GPS, téléphone mal réglé), on prend l'heure de réception.
  */
-export function toFix(pos: { coords: { longitude: number; latitude: number; accuracy: number }; timestamp: number }, now = Date.now()): Fix | null {
-  const { longitude, latitude, accuracy } = pos.coords;
+export function toFix(
+  pos: { coords: { longitude: number; latitude: number; accuracy: number; heading?: number | null; speed?: number | null }; timestamp: number },
+  now = Date.now(),
+): Fix | null {
+  const { longitude, latitude, accuracy, heading, speed } = pos.coords;
   if (!Number.isFinite(longitude) || !Number.isFinite(latitude) || !Number.isFinite(accuracy)) return null;
   const time = Number.isFinite(pos.timestamp) && Math.abs(pos.timestamp - now) < 30000 ? pos.timestamp : now;
-  return { lonlat: [longitude, latitude], accuracy, samples: 1, time, received: now };
+  const num = (v: number | null | undefined) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+  return { lonlat: [longitude, latitude], accuracy, samples: 1, time, received: now, course: num(heading), speed: num(speed) };
 }
 
 /** Suivi en continu (marche le long des voies). */

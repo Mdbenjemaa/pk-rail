@@ -1,5 +1,6 @@
 /** Filtres de la carte, avec les types d'éléments de la liste « autour de moi » qu'ils commandent. */
 export type FilterKey =
+  | 'signalements'
   | 'acces'
   | 'pk'
   | 'bornes'
@@ -31,6 +32,7 @@ export interface FilterDef {
 }
 
 export const FILTERS: FilterDef[] = [
+  { key: 'signalements', label: 'Mes signalements', hint: 'Anomalies signalées depuis ce téléphone', group: 'Mes données', on: true, layers: ['u-signal', 'u-signal-label'], kinds: [] },
   { key: 'acces', label: 'Mes accès (importés)', hint: 'Carte d’accès importée sur ce téléphone', group: 'Mes données', on: true, layers: ['u-acces', 'u-acces-label'], kinds: ['acces'] },
   { key: 'pk', label: 'PK calculés', hint: 'Tous les 100 m, recalés sur les repères SNCF et les bornes relevées', group: 'Repères', on: true, layers: ['r-pk-km', 'r-pk-km-label', 'r-pk-hm', 'r-pk-hm-label'], kinds: [] },
   { key: 'bornes', label: 'Bornes kilométriques (OSM)', hint: 'Bornes réelles relevées par les contributeurs', group: 'Repères', on: false, layers: ['r-bornes', 'r-bornes-label'], kinds: [] },

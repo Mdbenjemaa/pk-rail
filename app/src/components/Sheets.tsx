@@ -548,6 +548,9 @@ export function MenuSheet(p: {
   located: boolean;
   onClear: () => void;
   onInfo: () => void;
+  /** Nombre de signalements gardés sur le téléphone. */
+  signalements: number;
+  onSignalements: () => void;
   onClose: () => void;
 }) {
   const mode = useInstallMode();
@@ -570,6 +573,11 @@ export function MenuSheet(p: {
           <span>Effacer ma position</span>
         </button>
       )}
+      <button className="menu-row" onClick={p.onSignalements}>
+        <Icon name="alert" size={20} />
+        <span>Mes signalements{p.signalements ? ` (${p.signalements})` : ''}</span>
+        <Icon name="right" size={18} />
+      </button>
       <button className="menu-row" onClick={p.onInfo}>
         <Icon name="info" size={22} />
         <span>À propos, sources et version</span>

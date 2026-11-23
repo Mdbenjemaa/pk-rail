@@ -83,6 +83,18 @@ const PATHS: Record<string, ReactNode> = {
       <path d="M4 4v4.5h4.5M12 8v4.5l3 2" {...STROKE} strokeWidth={2.2} />
     </>
   ),
+  alert: (
+    <>
+      <path d="M12 3.5 21.5 20h-19z" {...STROKE} strokeWidth={2.2} strokeLinejoin="round" />
+      <path d="M12 9.5v5M12 17.2v.3" {...STROKE} strokeWidth={2.4} />
+    </>
+  ),
+  compass: (
+    <>
+      <path d="M12 2.5l4.2 9.5H7.8z" fill="#dc2626" />
+      <path d="M12 21.5L7.8 12h8.4z" fill="currentColor" opacity="0.45" />
+    </>
+  ),
 };
 
 export type IconName = keyof typeof PATHS;

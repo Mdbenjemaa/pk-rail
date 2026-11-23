@@ -2,6 +2,7 @@ import { fileURLToPath } from 'node:url';
 import { expect, LIEUSAINT, lineBounds, locate, mapReady, openApp, pkValue, placeAt, pointAtPk, test } from './helpers';
 
 const KML = fileURLToPath(new URL('./fixtures/acces-test.kml', import.meta.url));
+const PHOTO = fileURLToPath(new URL('./fixtures/photo-vegetation.jpg', import.meta.url));
 
 test.describe.configure({ mode: 'parallel' });
 
@@ -281,3 +282,63 @@ test('petit écran (320 × 568) : rien ne déborde ni ne se chevauche', async ({
   const live = await page.evaluate(() => document.documentElement.scrollWidth);
   expect(live).toBeLessThanOrEqual(320);
 });
+
+test('direction du téléphone : faisceau sur le point GPS et carte orientée', async ({ page }) => {
+  await openApp(page);
+  // Capteurs d'orientation autorisés, comme sur un téléphone.
+  await page.context().grantPermissions(['geolocation', 'accelerometer', 'gyroscope', 'magnetometer']);
+  await locate(page);
+  // Boussole simulée : le téléphone pointe vers l'ouest (270°).
+  await page.evaluate(() => {
+    setInterval(() => window.dispatchEvent(new DeviceOrientationEvent('deviceorientationabsolute', { alpha: 90, absolute: true })), 150);
+  });
+  const layout = (p: string) =>
+    page.evaluate((prop) => (window as unknown as { __pkrMap: import('maplibre-gl').Map }).__pkrMap.getLayoutProperty('me-beam', prop), p);
+  await expect.poll(() => layout('visibility')).toBe('visible');
+  expect(await layout('icon-rotate')).toBe(270);
+
+  await page.getByRole('button', { name: 'Tourner la carte dans ma direction' }).click();
+  const bearing = () => page.evaluate(() => (window as unknown as { __pkrMap: import('maplibre-gl').Map }).__pkrMap.getBearing());
+  await expect.poll(async () => Math.abs(((await bearing()) + 360) % 360 - 270)).toBeLessThan(4);
+  await page.getByRole('button', { name: 'Remettre le nord en haut' }).click();
+  await expect.poll(async () => Math.abs(await bearing())).toBeLessThan(1);
+});
+
+test('signaler : type, gravité, commentaire, photo, envoi et liste de mes signalements', async ({ page }) => {
+  page.on('dialog', (d) => void d.accept());
+  await openApp(page);
+  await page.context().grantPermissions(['geolocation', 'clipboard-read', 'clipboard-write']);
+  await locate(page);
+  await page.getByRole('button', { name: 'Signaler une anomalie ici' }).click();
+  const sheet = page.getByRole('dialog', { name: 'Signaler' });
+  await expect(sheet.locator('.sig-lieu')).toContainText(/Ligne 830 000 · PK 28\+7\d\d/);
+  await expect(sheet.getByRole('button', { name: 'Envoyer', exact: true })).toBeDisabled();
+  await sheet.getByRole('radio', { name: 'Végétation' }).click();
+  await sheet.getByRole('radio', { name: 'Urgente' }).click();
+  await sheet.getByRole('textbox', { name: 'Commentaire' }).fill('Branche tombée sur la voie 2');
+  await sheet.locator('input[type=file]').setInputFiles(PHOTO);
+  await expect(sheet.locator('.sig-photo img')).toHaveCount(1);
+  await sheet.getByRole('button', { name: 'Envoyer', exact: true }).click();
+  // Pas de partage dans ce navigateur : le texte est copié pour être collé dans un message.
+  await expect(page.locator('.toast')).toContainText(/copié|envoyé/);
+  const copied = await page.evaluate(() => navigator.clipboard.readText());
+  expect(copied).toContain('Végétation · URGENT');
+  expect(copied).toContain('Ligne 830 000');
+  expect(copied).toContain('Branche tombée sur la voie 2');
+
+  // Gardé sur le téléphone, même après rechargement.
+  await page.reload();
+  await page.getByRole('button', { name: /^Menu/ }).first().click();
+  await page.getByRole('dialog', { name: 'Menu' }).getByRole('button', { name: 'Mes signalements (1)' }).click();
+  const list = page.getByRole('dialog', { name: 'Mes signalements' });
+  await list.getByRole('button', { name: /Végétation/ }).click();
+  const view = page.getByRole('dialog', { name: 'Végétation' });
+  await expect(view).toContainText('Urgente');
+  await expect(view).toContainText('Branche tombée sur la voie 2');
+  await expect(view.locator('.sig-photo img')).toHaveCount(1);
+  await view.getByRole('button', { name: 'Supprimer' }).click();
+  await expect(view).toBeHidden();
+  await page.getByRole('button', { name: /^Menu/ }).first().click();
+  await expect(page.getByRole('dialog', { name: 'Menu' }).getByRole('button', { name: 'Mes signalements', exact: true })).toBeVisible();
+});
+

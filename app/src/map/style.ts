@@ -178,7 +178,7 @@ export function railLayers(basemap: Basemap, filters: Filters, night = false): L
 }
 
 export const INTERACTIVE_LAYERS = [
-  'u-target', 'u-acces',
+  'u-target', 'u-signal', 'u-acces',
   'r-gares', 'r-pn', 'r-sst', 'r-ouvrages', 'r-bornes', 'r-pk-km', 'r-pk-hm',
   'r-sig-carre-ic', 'r-sig-avert-ic', 'r-sig-vitesse-ic', 'r-sig-elec-ic', 'r-sig-autre-ic',
   'r-sig-carre', 'r-sig-avert', 'r-sig-vitesse', 'r-sig-elec', 'r-sig-autre',
@@ -190,6 +190,7 @@ export interface Overlays {
   me: FeatureCollection | null;
   target: FeatureCollection | null;
   acces: FeatureCollection | null;
+  signal: FeatureCollection | null;
 }
 
 function overlayLayers(filters: Filters, photo: boolean, night: boolean): LayerSpecification[] {
@@ -204,6 +205,15 @@ function overlayLayers(filters: Filters, photo: boolean, night: boolean): LayerS
       id: 'u-acces-label', type: 'symbol', source: 'acces', minzoom: 11,
       layout: { visibility: filters.acces ? 'visible' : 'none', 'text-field': ['get', 'n'], 'text-font': BOLD, 'text-size': 12, 'text-offset': [0, 1.1], 'text-anchor': 'top', 'text-optional': true },
       paint: { 'text-color': dark ? '#bbf7d0' : '#065f46', 'text-halo-color': halo, 'text-halo-width': 1.6 },
+    },
+    {
+      id: 'u-signal', type: 'circle', source: 'signal', layout: { visibility: filters.signalements ? 'visible' : 'none' },
+      paint: { 'circle-radius': ['interpolate', ['linear'], ['zoom'], 8, 5, 15, 9], 'circle-color': ['get', 'c'], 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 2.5 },
+    },
+    {
+      id: 'u-signal-label', type: 'symbol', source: 'signal', minzoom: 12,
+      layout: { visibility: filters.signalements ? 'visible' : 'none', 'text-field': ['get', 'n'], 'text-font': BOLD, 'text-size': 12, 'text-offset': [0, 1.2], 'text-anchor': 'top', 'text-optional': true },
+      paint: { 'text-color': dark ? '#fed7aa' : '#9a3412', 'text-halo-color': halo, 'text-halo-width': 1.6 },
     },
     {
       id: 'u-target', type: 'circle', source: 'target',
@@ -223,6 +233,14 @@ function meLayers(): LayerSpecification[] {
     { id: 'me-accuracy', type: 'fill', source: 'me', filter: ['==', ['get', 'role'], 'accuracy'], paint: { 'fill-color': '#2563eb', 'fill-opacity': 0.15, 'fill-outline-color': '#2563eb' } },
     { id: 'me-link', type: 'line', source: 'me', filter: ['==', ['get', 'role'], 'link'], paint: { 'line-color': '#2563eb', 'line-width': 2, 'line-dasharray': [2, 1.5] } },
     { id: 'me-snap', type: 'circle', source: 'me', filter: ['==', ['get', 'role'], 'snap'], paint: { 'circle-radius': 9, 'circle-color': 'rgba(0,0,0,0)', 'circle-stroke-color': '#dc2626', 'circle-stroke-width': 3 } },
+    // Faisceau de direction (image « pkr-faisceau » dessinée par l'appli, tournée selon la boussole ou le GPS).
+    {
+      id: 'me-beam', type: 'symbol', source: 'me', filter: ['all', ['==', ['get', 'role'], 'me'], ['==', ['get', 'gps'], true]],
+      layout: {
+        visibility: 'none', 'icon-image': 'pkr-faisceau', 'icon-anchor': 'bottom', 'icon-rotate': 0,
+        'icon-rotation-alignment': 'map', 'icon-pitch-alignment': 'map', 'icon-allow-overlap': true, 'icon-ignore-placement': true,
+      },
+    },
     { id: 'me-dot', type: 'circle', source: 'me', filter: ['==', ['get', 'role'], 'me'], paint: { 'circle-radius': 8, 'circle-color': '#2563eb', 'circle-stroke-color': '#ffffff', 'circle-stroke-width': 3 } },
   ];
 }
@@ -233,6 +251,7 @@ export async function buildStyle(basemap: Basemap, filters: Filters, o: Overlays
     me: { type: 'geojson', data: o.me ?? emptyFC() },
     target: { type: 'geojson', data: o.target ?? emptyFC() },
     acces: { type: 'geojson', data: o.acces ?? emptyFC() },
+    signal: { type: 'geojson', data: o.signal ?? emptyFC() },
   };
   let baseLayers: LayerSpecification[] = [{ id: 'fond', type: 'background', paint: { 'background-color': basemap === 'photo' ? '#1f2937' : '#eef0ec' } }];
   let sprite: StyleSpecification['sprite'];

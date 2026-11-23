@@ -15,6 +15,7 @@ import type { FeatureCollection } from 'geojson';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { PMTiles, Protocol } from 'pmtiles';
 import { ChunkedSource, DATA_URL, PMTILES_URL, RailTilesSource } from '../lib/data';
+import { angleDiff, subscribeHeading } from '../lib/heading';
 import { PREVIEW } from '../lib/env';
 import type { LonLat } from '../lib/geo';
 import { FILTERS, type Filters } from '../lib/layers';
@@ -63,11 +64,15 @@ interface Props {
   me: FeatureCollection | null;
   target: FeatureCollection | null;
   acces: FeatureCollection | null;
+  /** Mes signalements (points colorés selon la gravité). */
+  signal?: FeatureCollection | null;
   focus: FocusRequest | null;
   /** Suivi : position à garder visible (la carte ne bouge que si le point va sortir de l'écran). */
   keepInView?: LonLat | null;
   /** L'utilisateur a déplacé ou zoomé la carte lui-même. */
   onUserMove?: () => void;
+  /** La carte tourne dans la direction du téléphone (sinon nord en haut). */
+  orient?: boolean;
   onFeature: (f: MapGeoJSONFeature, at: LonLat) => void;
   onLongPress: (at: LonLat) => void;
   onMapTap: () => void;
@@ -91,6 +96,28 @@ function viewPadding(m: MapLibreMap) {
   };
 }
 
+/** Faisceau de direction : un cône bleu qui s'estompe, pointe en bas (posée sur le point GPS). */
+function beamImage(): ImageData {
+  const w = 120;
+  const h = 150;
+  const c = document.createElement('canvas');
+  c.width = w;
+  c.height = h;
+  const g = c.getContext('2d')!;
+  const spread = (32 * Math.PI) / 180;
+  const grad = g.createRadialGradient(w / 2, h, 0, w / 2, h, h);
+  grad.addColorStop(0, 'rgba(37, 99, 235, 0.55)');
+  grad.addColorStop(0.7, 'rgba(37, 99, 235, 0.18)');
+  grad.addColorStop(1, 'rgba(37, 99, 235, 0)');
+  g.fillStyle = grad;
+  g.beginPath();
+  g.moveTo(w / 2, h);
+  g.arc(w / 2, h, h, -Math.PI / 2 - spread, -Math.PI / 2 + spread);
+  g.closePath();
+  g.fill();
+  return g.getImageData(0, 0, w, h);
+}
+
 /** Le bandeau et la fiche du bas cachent une partie de la carte : on centre dans la zone libre. */
 function goTo(m: MapLibreMap, f: FocusRequest, animate: boolean) {
   const padding = viewPadding(m);
@@ -104,11 +131,31 @@ function goTo(m: MapLibreMap, f: FocusRequest, animate: boolean) {
   else m.jumpTo({ center: f.center, zoom, padding });
 }
 
-export function MapView({ basemap, night, filters, me, target, acces, focus, keepInView, onUserMove, onFeature, onLongPress, onMapTap }: Props) {
+export function MapView({ basemap, night, filters, me, target, acces, signal = null, focus, keepInView, onUserMove, onFeature, onLongPress, onMapTap, orient = false }: Props) {
   const container = useRef<HTMLDivElement>(null);
   const map = useRef<MapLibreMap | null>(null);
-  const latest = useRef({ night, filters, me, target, acces, focus, onFeature, onLongPress, onMapTap, onUserMove });
-  latest.current = { night, filters, me, target, acces, focus, onFeature, onLongPress, onMapTap, onUserMove };
+  const latest = useRef({ night, filters, me, target, acces, signal, focus, onFeature, onLongPress, onMapTap, onUserMove, orient });
+  latest.current = { night, filters, me, target, acces, signal, focus, onFeature, onLongPress, onMapTap, onUserMove, orient };
+  const heading = useRef<number | null>(null);
+  const waitingMove = useRef(false);
+
+  /** Faisceau tourné selon la direction du téléphone ; carte tournée aussi si demandé. */
+  const applyHeading = (m: MapLibreMap | null) => {
+    if (!m || !m.getLayer('me-beam')) return;
+    const h = heading.current;
+    m.setLayoutProperty('me-beam', 'visibility', h === null ? 'none' : 'visible');
+    if (h !== null) m.setLayoutProperty('me-beam', 'icon-rotate', Math.round(h));
+    if (!latest.current.orient || h === null || Math.abs(angleDiff(m.getBearing(), h)) < 3) return;
+    if (!m.isMoving()) m.rotateTo(h, { duration: 250 });
+    else if (!waitingMove.current) {
+      // Carte en mouvement (recentrage) : on tourne dès qu'elle s'arrête.
+      waitingMove.current = true;
+      m.once('moveend', () => {
+        waitingMove.current = false;
+        applyHeading(m);
+      });
+    }
+  };
   const appliedFocus = useRef(0);
   /** Un même recentrage n'est fait qu'une fois (demande arrivée avant ou après le chargement de la carte). */
   const applyFocus = (m: MapLibreMap, f: FocusRequest, animate: boolean) => {
@@ -116,12 +163,19 @@ export function MapView({ basemap, night, filters, me, target, acces, focus, kee
     appliedFocus.current = f.seq;
     goTo(m, f, animate);
   };
-  const overlays = (): Overlays => ({ me: latest.current.me, target: latest.current.target, acces: latest.current.acces });
+  const overlays = (): Overlays => ({
+    me: latest.current.me,
+    target: latest.current.target,
+    acces: latest.current.acces,
+    signal: latest.current.signal,
+  });
   const syncOverlays = (m: MapLibreMap) => {
     const o = overlays();
     setSource(m, 'me', o.me);
     setSource(m, 'target', o.target);
     setSource(m, 'acces', o.acces);
+    setSource(m, 'signal', o.signal);
+    applyHeading(m);
   };
 
   // Création de la carte.
@@ -197,6 +251,10 @@ export function MapView({ basemap, night, filters, me, target, acces, focus, kee
       created.on('dragstart', userGesture);
       created.on('zoomstart', userGesture);
       created.on('contextmenu', (e) => latest.current.onLongPress([e.lngLat.lng, e.lngLat.lat]));
+      // Image du faisceau de direction, dessinée à la demande (aussi après un changement de fond).
+      created.on('styleimagemissing', (e: { id: string }) => {
+        if (e.id === 'pkr-faisceau' && !created.hasImage('pkr-faisceau')) created.addImage('pkr-faisceau', beamImage(), { pixelRatio: 2 });
+      });
 
       // Tuiles indisponibles (pas de réseau) : pas d'alerte, mais on réessaie quand le réseau revient.
       let railFailed = false;
@@ -270,8 +328,28 @@ export function MapView({ basemap, night, filters, me, target, acces, focus, kee
 
   // Position de l'utilisateur, destination, accès importés.
   useEffect(() => setSource(map.current, 'me', me), [me]);
+
+  // Direction du téléphone (boussole ou GPS).
+  useEffect(
+    () =>
+      subscribeHeading((h) => {
+        heading.current = h;
+        applyHeading(map.current);
+      }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  );
+  // Bouton boussole : la carte suit la direction, ou revient le nord en haut.
+  useEffect(() => {
+    const m = map.current;
+    if (!m) return;
+    if (orient) applyHeading(m);
+    else if (Math.abs(m.getBearing()) > 0.5) m.rotateTo(0, { duration: 400 });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orient]);
   useEffect(() => setSource(map.current, 'target', target), [target]);
   useEffect(() => setSource(map.current, 'acces', acces), [acces]);
+  useEffect(() => setSource(map.current, 'signal', signal), [signal]);
 
   // Recentrage demandé (si la carte n'est pas encore prête, il se fera à son chargement).
   useEffect(() => {

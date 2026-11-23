@@ -11,8 +11,21 @@ import { AccesSheet, Disclaimer, FeatureCard, FilterSheet, InfoSheet, MenuSheet,
 import type { LocateState, Theme } from './components/state';
 import { TargetSheet, type Origin, type TargetState } from './components/TargetSheet';
 import { InstallBanner } from './components/Install';
+import { OrientButton } from './components/OrientButton';
+import { SignalementSheet, SignalementsSheet, SignalerSheet } from './components/Signalements';
+import {
+  deleteSignalement,
+  listSignalements,
+  saveSignalement,
+  shareSignalement,
+  signalementFeatures,
+  type Envoi,
+  type Lieu,
+  type Signalement,
+} from './lib/signalements';
 import { accesFeature, accesFeatures, findAccesAt, loadAcces, readAccesSource, saveAcces, snapAcces, type AccesSet } from './lib/acces';
 import { setUpdateGate } from './lib/update';
+import { setCourse, startCompass } from './lib/heading';
 import { fmtLine, fmtPk } from './lib/format';
 import { decodeGeom, parsePk, pkRange, positionsAtPk } from './lib/pk';
 import { dataUpdate, keepAround, loadCell, loadLine, loadManifest, OFFLINE_MESSAGE, type Manifest } from './lib/data';
@@ -28,7 +41,7 @@ import { MapView, type FocusRequest } from './map/MapView';
 import { PREVIEW } from './lib/env';
 import type { Basemap } from './map/style';
 
-type Panel = 'none' | 'filters' | 'info' | 'menu' | 'search' | 'autour' | 'acces';
+type Panel = 'none' | 'filters' | 'info' | 'menu' | 'search' | 'autour' | 'acces' | 'signaler' | 'signalements';
 
 const darkQuery = () => (typeof window.matchMedia === 'function' ? window.matchMedia('(prefers-color-scheme: dark)') : null);
 
@@ -51,6 +64,14 @@ export default function App() {
   const [followDir, setFollowDir] = useState<1 | -1 | 0>(0);
   const [followAt, setFollowAt] = useState<LonLat | null>(null);
   const [mapFree, setMapFree] = useState(false);
+  /** Carte tournée dans la direction du téléphone (bouton boussole). */
+  const [orient, setOrient] = useState(false);
+  /** Mes signalements (gardés sur le téléphone) et celui ouvert. */
+  const [signals, setSignals] = useState<Signalement[]>([]);
+  const [openSignal, setOpenSignal] = useState<Signalement | null>(null);
+  useEffect(() => {
+    void listSignalements().then(setSignals);
+  }, []);
   const [awake, setAwake] = useState<AwakeStatus | null>(null);
   const [me, setMe] = useState<FeatureCollection | null>(null);
   const [focus, setFocus] = useState<FocusRequest | null>(null);
@@ -173,7 +194,7 @@ export default function App() {
         (mode === 'suivi' ? pickFollowLine(match.lines, prefer, fix.accuracy) : pickLine(match.lines));
       const doc = chosen ? await loadLine(chosen.code).catch(() => null) : null;
       setLoc({ phase: 'result', fix, mode, radius, match, chosen: chosen ?? null, doc });
-      setMe(meFeatures(fix.lonlat, fix.accuracy, chosen?.point ?? null));
+      setMe(meFeatures(fix.lonlat, fix.accuracy, chosen?.point ?? null, mode !== 'manuel'));
       if (recenter) focusOn(fix.lonlat, mode === 'suivi' ? undefined : 17);
       // Données autour gardées sur le téléphone (une fois tous les 3 km, ou une minute après un échec) :
       // la suite marche sans réseau.
@@ -205,6 +226,7 @@ export default function App() {
 
   const locate = () => {
     if (PREVIEW) return gpsBlocked();
+    startCompass();
     stopFollowing();
     setPicked(null);
     setTarget(null);
@@ -252,6 +274,7 @@ export default function App() {
   const startFollowing = () => {
     if (PREVIEW) return gpsBlocked();
     if (!('geolocation' in navigator)) return showToast('Ce téléphone ne donne pas accès au GPS.');
+    startCompass();
     acquisition.current?.cancel();
     stopFollowing();
     setFollowing(true);
@@ -295,6 +318,7 @@ export default function App() {
     stopFollow.current = follow(
       (fix) => {
         if (!alive()) return;
+        setCourse(fix.course, fix.speed);
         pending = fix;
         void run();
       },
@@ -401,6 +425,57 @@ export default function App() {
   );
 
   const origin: Origin | null = res && chosen ? { code: chosen.code, pk: chosen.pk, lonlat: res.fix.lonlat } : null;
+
+  /** Où l'on est, pour un signalement : ligne, PK (celui du suivi s'il tourne), voie la plus proche. */
+  const lieu: Lieu | null = res
+    ? {
+        lonlat: res.fix.lonlat,
+        accuracy: res.fix.accuracy,
+        manuel: res.mode === 'manuel',
+        code: chosen?.code,
+        pk: chosen ? Math.round((herePk ?? chosen.pk) * 1000) / 1000 : undefined,
+        ligne: (chosen && manifest?.lines[chosen.code]?.n) || undefined,
+        voie: chosen ? res.match.tracks.find((t) => t.code === chosen.code && t.name)?.name : undefined,
+      }
+    : null;
+  const signalFC = useMemo(() => signalementFeatures(signals), [signals]);
+
+  const envoiToast = (r: Envoi) =>
+    showToast(
+      r === 'copie'
+        ? 'Partage indisponible ici : le texte du signalement est copié, colle-le dans un message.'
+        : r === 'annule'
+          ? 'Signalement enregistré sur le téléphone, pas envoyé.'
+          : 'Signalement envoyé.',
+    );
+
+  /** Envoi par le partage du téléphone (appelé directement dans le toucher : sinon le téléphone refuse). */
+  const sendSignal = (s: Signalement) => {
+    const sending = shareSignalement(s);
+    void sending.then(async (r) => {
+      envoiToast(r);
+      if (r === 'annule') return;
+      const done = { ...s, sent: Date.now() };
+      await saveSignalement(done).catch(() => undefined);
+      setSignals((cur) => cur.map((x) => (x.id === s.id ? done : x)));
+      setOpenSignal((o) => (o && o.id === s.id ? done : o));
+    });
+  };
+
+  const newSignal = async (draft: Omit<Signalement, 'id' | 'created'>, send: boolean) => {
+    const s: Signalement = { ...draft, id: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, created: Date.now() };
+    if (send) sendSignal(s);
+    await saveSignalement(s);
+    setSignals((cur) => [s, ...cur.filter((x) => x.id !== s.id)]);
+    setFilters((f) => ({ ...f, signalements: true }));
+    setPanel('none');
+    if (!send) showToast('Signalement enregistré sur le téléphone.');
+  };
+
+  const openSignaler = () => {
+    setPanel('signaler');
+    if (loc.phase === 'idle' || loc.phase === 'error') locate();
+  };
 
   const targetFC = useMemo<FeatureCollection | null>(() => {
     if (!target) return null;
@@ -531,10 +606,18 @@ export default function App() {
         acces={accesFC}
         focus={focus}
         keepInView={following && !mapFree ? followAt : null}
+        orient={orient && !!me}
+        signal={signalFC}
         onUserMove={() => {
           if (stopFollow.current) setMapFree(true);
         }}
-        onFeature={(f, at) => setPicked({ f, at })}
+        onFeature={(f, at) => {
+          if (f.layer.id === 'u-signal') {
+            const s = signals.find((x) => x.id === f.properties?.id);
+            if (s) return setOpenSignal(s);
+          }
+          setPicked({ f, at });
+        }}
         onLongPress={(at) => placeHere(at)}
         onMapTap={() => setPicked(null)}
       />
@@ -557,6 +640,8 @@ export default function App() {
             {toast}
           </div>
         )}
+        <div className="tools-row">
+          {me ? <OrientButton orient={orient} onToggle={setOrient} /> : <span />}
         <div className="map-tools">
           {!bannerHasMenu && (
             <button className="tool-btn round" onClick={() => setPanel('menu')} aria-label="Menu : affichage jour ou nuit, installer, à propos">
@@ -571,6 +656,11 @@ export default function App() {
             <Icon name="door" />
             <span>Accès</span>
           </button>
+          <button className="tool-btn" onClick={openSignaler} aria-label="Signaler une anomalie ici">
+            <Icon name="alert" />
+            <span>Signaler</span>
+          </button>
+        </div>
         </div>
       </div>
 
@@ -656,7 +746,46 @@ export default function App() {
             setPanel('none');
           }}
           onInfo={() => setPanel('info')}
+          signalements={signals.length}
+          onSignalements={() => setPanel('signalements')}
           onClose={() => setPanel('none')}
+        />
+      )}
+      {panel === 'signaler' && (
+        <SignalerSheet
+          lieu={lieu}
+          locating={loc.phase === 'acquiring'}
+          onLocate={locate}
+          onSave={newSignal}
+          onClose={() => setPanel('none')}
+        />
+      )}
+      {panel === 'signalements' && (
+        <SignalementsSheet
+          list={signals}
+          onOpen={(s) => {
+            setPanel('none');
+            setOpenSignal(s);
+          }}
+          onNew={openSignaler}
+          onClose={() => setPanel('none')}
+        />
+      )}
+      {openSignal && (
+        <SignalementSheet
+          s={openSignal}
+          onSend={() => sendSignal(openSignal)}
+          onShow={() => {
+            showOnMap(openSignal.lonlat, 17);
+            setOpenSignal(null);
+          }}
+          onDelete={() => {
+            if (!window.confirm('Supprimer ce signalement du téléphone ? Les photos seront effacées.')) return;
+            const id = openSignal.id;
+            void deleteSignalement(id).then(() => setSignals((cur) => cur.filter((x) => x.id !== id)));
+            setOpenSignal(null);
+          }}
+          onClose={() => setOpenSignal(null)}
         />
       )}
       {panel === 'info' && <InfoSheet manifest={manifest} onClose={() => setPanel('none')} />}
