@@ -32,7 +32,8 @@ export interface Cell {
 }
 
 /** [pk, type, libellé, détail, lon, lat, pk de fin (tunnels, quais)] */
-export type LinePoint = [number, string, string, string, number, number, number?];
+/** [PK, type, nom, détail, lon, lat, PK de fin (zones) ou null, dessin du signal] */
+export type LinePoint = [number, string, string, string, number, number, (number | null)?, string?];
 export interface LineDoc {
   code: string;
   name: string | null;

@@ -13,6 +13,8 @@ export interface AroundItem {
   pk: number;
   pkEnd?: number;
   kind: string;
+  /** Nom du dessin RFN (signaux). */
+  ic?: string;
   label: string;
   detail: string;
   lonlat: [number, number];
@@ -21,8 +23,8 @@ export interface AroundItem {
 }
 
 function item(p: LinePoint, here: number): AroundItem {
-  const [pk, kind, label, detail, lon, lat, pkEnd] = p;
-  return { pk, pkEnd, kind, label, detail, lonlat: [lon, lat], dist: Math.abs(pk - here) * 1000 };
+  const [pk, kind, label, detail, lon, lat, pkEnd, ic] = p;
+  return { pk, pkEnd: pkEnd ?? undefined, kind, label, detail, ic, lonlat: [lon, lat], dist: Math.abs(pk - here) * 1000 };
 }
 
 /** Éléments de part et d'autre du PK, du plus proche au plus loin. */
@@ -40,7 +42,7 @@ export function aroundPk(
     if (!visible(p[1])) continue;
     const pk = p[0];
     const end = p[6];
-    if (end !== undefined && pk <= here && here <= end) {
+    if (typeof end === 'number' && pk <= here && here <= end) {
       inside.push(item(p, here));
       continue;
     }

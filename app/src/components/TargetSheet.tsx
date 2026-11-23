@@ -4,6 +4,7 @@ import { fmtDist, fmtLine, fmtPk } from '../lib/format';
 import { distance, type LonLat } from '../lib/geo';
 import { kindVisible, KIND_BADGE, type Filters } from '../lib/layers';
 import { aroundPk } from '../lib/nearby';
+import { signalImage, SIGNAL_ICONS } from '../lib/signaux';
 import { navLinks, type PkPosition } from '../lib/pk';
 
 export interface TargetState {
@@ -161,9 +162,15 @@ export function TargetSheet(p: {
                 return (
                   <li key={i}>
                     <button className="item" onClick={() => p.onFocus(it.lonlat)}>
-                      <span className="badge" style={{ background: b.color }} title={b.name}>
-                        {b.text}
-                      </span>
+                      {it.ic && SIGNAL_ICONS ? (
+                        <span className="badge-sig" title={b.name}>
+                          <img src={signalImage(it.ic)} alt="" loading="lazy" />
+                        </span>
+                      ) : (
+                        <span className="badge" style={{ background: b.color }} title={b.name}>
+                          {b.text}
+                        </span>
+                      )}
                       <span className="item-main">
                         <b>{it.label}</b>
                         {it.detail && <small>{it.detail}</small>}

@@ -9,6 +9,7 @@ Usage : python3 -I build_products.py <build> <dossier app public/data> <tiles-sr
 """
 import json
 import math
+import os
 import re
 import sys
 import time
@@ -219,7 +220,8 @@ for s in osm['signals']:
         snapped_signals += 1
         code = lines[i]['code']
         props.update({'c': code, 'pk': fmt_pk(pk)})
-        line_points[code].append([round(pk, 3), f'sig_{cat}', props['l'], '', lon, lat])
+        # Signal dessiné : PK de fin vide (null) puis nom du dessin, pour les listes de l'appli.
+        line_points[code].append([round(pk, 3), f'sig_{cat}', props['l'], '', lon, lat] + ([None, props['ic']] if 'ic' in props else []))
     tile_layers['signaux'].append(feat('Point', [lon, lat], props))
 print('signaux', dict(sig_counts), 'rattachés', snapped_signals)
 print('dessins RFN', sum(icon_counts.values()), 'signaux,', len(icon_counts), 'dessins différents')
@@ -444,7 +446,8 @@ for c, content in cells.items():
     cell_sizes[c] = len(s)
 
 manifest = {
-    'version': time.strftime('%Y-%m-%d'),
+    # RR_DATA_VERSION : deuxième publication le même jour (ex. 2026-11-23-2), pour que les téléphones rechargent.
+    'version': os.environ.get('RR_DATA_VERSION') or time.strftime('%Y-%m-%d'),
     'cellsPerDegree': CELL,
     'cells': sorted(cell_sizes),
     'lines': line_index,

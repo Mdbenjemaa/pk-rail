@@ -9,6 +9,7 @@ import { aroundPk, sectionAt, statutAt, type AroundItem } from '../lib/nearby';
 import type { PkEstimate } from '../lib/pkfilter';
 import type { AwakeStatus } from '../lib/wakelock';
 import { PkCounter } from './PkCounter';
+import { signalImage, SIGNAL_ICONS } from '../lib/signaux';
 
 export type LocateState =
   | { phase: 'idle' }
@@ -89,8 +90,16 @@ function FollowHead(p: {
   );
 }
 
-function Badge({ kind }: { kind: string }) {
+function Badge({ kind, ic }: { kind: string; ic?: string }) {
   const b = KIND_BADGE[kind] ?? { text: '?', color: '#6b7280', name: kind };
+  // Signal dont on connaît le dessin : le vrai signal à la place de la pastille.
+  if (ic && SIGNAL_ICONS) {
+    return (
+      <span className="badge-sig" title={b.name}>
+        <img src={signalImage(ic)} alt="" loading="lazy" />
+      </span>
+    );
+  }
   return (
     <span className="badge" style={{ background: b.color }} title={b.name}>
       {b.text}
@@ -140,7 +149,7 @@ function ItemRow({ it, onFocus }: { it: AroundItem; onFocus: (at: [number, numbe
   return (
     <li>
       <button className="item" onClick={() => onFocus(it.lonlat)}>
-        <Badge kind={it.kind} />
+        <Badge kind={it.kind} ic={it.ic} />
         <span className="item-main">
           <b>{it.label}</b>
           {it.detail && <small>{it.detail}</small>}

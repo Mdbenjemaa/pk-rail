@@ -353,3 +353,11 @@ textarea.text { resize: vertical; min-height: 64px; }
 /* Itinéraire : un seul bouton Google Maps, pleine largeur */
 .nav-links { display: flex; }
 .nav-links .btn-nav { flex: 1; }
+
+/* Dessin du signal dans les listes */
+.badge-sig { width: 30px; height: 34px; flex: none; display: grid; place-items: center; border-radius: 8px; background: #e2e8f0; }
+.badge-sig img { max-width: 26px; max-height: 30px; object-fit: contain; }
+
+/* Recherches récentes */
+.results-head { display: flex; justify-content: space-between; align-items: center; padding: 8px 14px 4px; font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.03em; color: var(--muted); }
+.results-head .link-btn { text-transform: none; letter-spacing: 0; font-size: 13px; }

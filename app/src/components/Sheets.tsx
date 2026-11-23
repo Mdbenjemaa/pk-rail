@@ -1,5 +1,5 @@
 import { PREVIEW } from '../lib/env';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { Point } from 'geojson';
 import type { MapGeoJSONFeature } from 'maplibre-gl';
 import { loadGares, type GareEntry, type Manifest } from '../lib/data';
@@ -7,6 +7,7 @@ import type { AccesSet } from '../lib/acces';
 import { fmtLine, fmtPk } from '../lib/format';
 import { parsePk, parsePkQuery } from '../lib/pk';
 import { NavLinks } from './TargetSheet';
+import { bestIndexes, normName } from '../lib/search';
 import { RFN_CREDIT, RFN_URL, signalImage, SIGNAL_ICONS } from '../lib/signaux';
 import { InstallSteps } from './Install';
 import { MyMapsLink } from './MyMapsLink';
@@ -163,7 +164,7 @@ export function InfoSheet(p: { manifest: Manifest | null; onClose: () => void })
       <h3>Version</h3>
       <p className="small">
         Appli du {new Date(__BUILD__).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' })} · données PK du{' '}
-        {p.manifest ? new Date(`${p.manifest.version}T12:00:00`).toLocaleDateString('fr-FR') : '…'}
+        {p.manifest ? new Date(`${p.manifest.version.slice(0, 10)}T12:00:00`).toLocaleDateString('fr-FR') : '…'}
       </p>
       <button
         className="btn wide"
@@ -394,6 +395,31 @@ const norm = (s: string) =>
     .replace(/[^a-z0-9]+/g, ' ')
     .trim();
 
+interface SearchResult {
+  label: string;
+  sub: string;
+  at?: LonLat;
+  zoom?: number;
+  pk?: { code: string; pk: number };
+}
+
+const RECENTS_KEY = 'pkr-recherches';
+function loadRecents(): SearchResult[] {
+  try {
+    const v = JSON.parse(localStorage.getItem(RECENTS_KEY) ?? '[]');
+    return Array.isArray(v) ? v.slice(0, 6) : [];
+  } catch {
+    return [];
+  }
+}
+function saveRecents(list: SearchResult[]) {
+  try {
+    localStorage.setItem(RECENTS_KEY, JSON.stringify(list));
+  } catch {
+    /* stockage plein ou bloqué */
+  }
+}
+
 export function Search(p: {
   manifest: Manifest | null;
   /** Ligne où l'on se trouve (ou celle du chantier) : un PK tapé seul s'y rapporte. */
@@ -404,13 +430,16 @@ export function Search(p: {
   const [q, setQ] = useState('');
   const [gares, setGares] = useState<GareEntry[] | null>(null);
   const [open, setOpen] = useState(false);
+  const [recents, setRecents] = useState<SearchResult[]>(() => loadRecents());
+  // Noms de gares préparés une fois (accents, « Saint » → « St ») pour chercher vite à chaque lettre.
+  const garesNorm = useMemo(() => (gares ?? []).map((g) => normName(g[0])), [gares]);
 
   useEffect(() => {
     if (open && !gares) loadGares().then(setGares).catch(() => setGares([]));
   }, [open, gares]);
 
   const nq = norm(q);
-  const results: { label: string; sub: string; at?: LonLat; zoom?: number; pk?: { code: string; pk: number } }[] = [];
+  const results: SearchResult[] = [];
   const pkq = parsePkQuery(q);
   if (pkq && p.manifest?.lines[pkq.code]) {
     results.push({
@@ -443,14 +472,25 @@ export function Search(p: {
         }
       }
     }
-    for (const g of gares ?? []) {
-      const k = norm(g[0]);
-      if (k.startsWith(nq) || k.includes(` ${nq}`)) {
-        results.push({ label: g[0], sub: `Gare · ligne ${fmtLine(g[3])}`, at: [g[1], g[2]], zoom: 15 });
-        if (results.length >= 8) break;
-      }
+    // Gares : début du nom ou d'un mot d'abord, puis noms approchants (fautes de frappe tolérées).
+    for (const i of bestIndexes(q, garesNorm, Math.max(0, 8 - results.length))) {
+      const g = gares![i];
+      results.push({ label: g[0], sub: `Gare · ligne ${fmtLine(g[3])}`, at: [g[1], g[2]], zoom: 15 });
     }
   }
+
+  const choose = (r: SearchResult) => {
+    if (r.pk) p.onPk(r.pk.code, r.pk.pk);
+    else if (r.at) p.onGo(r.at, r.zoom ?? 15);
+    else return;
+    const next = [r, ...recents.filter((x) => x.label !== r.label || x.sub !== r.sub)].slice(0, 6);
+    setRecents(next);
+    saveRecents(next);
+    setQ('');
+    setOpen(false);
+    (document.activeElement as HTMLElement | null)?.blur();
+  };
+  const showRecents = open && !q.trim() && recents.length > 0;
 
   return (
     <div className="search">
@@ -462,20 +502,36 @@ export function Search(p: {
         aria-label="Rechercher une gare ou une ligne"
         enterKeyHint="search"
       />
+      {showRecents && (
+        <ul className="results">
+          <li className="results-head">
+            <span>Récents</span>
+            <button
+              className="link-btn"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => {
+                setRecents([]);
+                saveRecents([]);
+              }}
+            >
+              Effacer
+            </button>
+          </li>
+          {recents.map((r, i) => (
+            <li key={`r-${i}`}>
+              <button onClick={() => choose(r)}>
+                <b>{r.label}</b>
+                <small>{r.sub}</small>
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
       {open && results.length > 0 && (
         <ul className="results">
           {results.map((r, i) => (
             <li key={i}>
-              <button
-                disabled={!r.pk && !r.at}
-                onClick={() => {
-                  if (r.pk) p.onPk(r.pk.code, r.pk.pk);
-                  else if (r.at) p.onGo(r.at, r.zoom ?? 15);
-                  setQ('');
-                  setOpen(false);
-                  (document.activeElement as HTMLElement | null)?.blur();
-                }}
-              >
+              <button disabled={!r.pk && !r.at} onClick={() => choose(r)}>
                 <b>{r.label}</b>
                 <small>{r.sub}</small>
               </button>

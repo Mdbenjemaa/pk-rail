@@ -58,8 +58,13 @@ def pack(ratio: int, suffix: str):
 
 pack(1, '')
 pack(2, '@2x')
-# Dessins de la fiche : échelle 3, hauteur limitée à 240 px.
+# Dessins de la fiche et des listes : échelle 3, recadrés, hauteur limitée à 240 px.
 for n, im in pack(3, '@3x'):
+    # Recadré sur le dessin (les planches laissent de la marge transparente autour des petits signaux).
+    box = im.getchannel('A').getbbox()
+    if box:
+        pad = 6
+        im = im.crop((max(box[0] - pad, 0), max(box[1] - pad, 0), min(box[2] + pad, im.width), min(box[3] + pad, im.height)))
     if im.height > 240:
         im = im.resize((round(im.width * 240 / im.height), 240), Image.LANCZOS)
     im.save(OUT / 'fiche' / f'{slug(n)}.png', optimize=True)
