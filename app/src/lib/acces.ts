@@ -3,7 +3,7 @@ import { SB_KEY, SB_URL } from './server';
 import { myMapsId, myMapsShortLink } from './mymaps';
 
 export { myMapsId };
-import type { FeatureCollection } from 'geojson';
+import type { Feature, FeatureCollection, Point } from 'geojson';
 import { loadCell, loadManifest } from './data';
 import type { LonLat } from './geo';
 import { cellsAround, matchInCells } from './locate';
@@ -205,15 +205,27 @@ export async function snapAcces(points: RawPoint[]): Promise<Acces[]> {
 }
 
 /** Couche de carte des accès importés. */
-export function accesFeatures(sets: AccesSet[]): FeatureCollection {
+/** Point de carte d'un accès (mêmes propriétés que sur la carte : sa fiche s'affiche pareil). */
+export function accesFeature(a: Acces, setName: string): Feature<Point> {
   return {
-    type: 'FeatureCollection',
-    features: sets.flatMap((s) =>
-      s.items.map((a) => ({
-        type: 'Feature' as const,
-        properties: { n: a.name, d: a.desc, c: a.code, pk: a.pk !== undefined ? fmtPk(a.pk) : undefined, set: s.name },
-        geometry: { type: 'Point' as const, coordinates: a.lonlat },
-      })),
-    ),
+    type: 'Feature',
+    properties: { n: a.name, d: a.desc, c: a.code, pk: a.pk !== undefined ? fmtPk(a.pk) : undefined, set: setName },
+    geometry: { type: 'Point', coordinates: a.lonlat },
   };
+}
+
+export function accesFeatures(sets: AccesSet[]): FeatureCollection {
+  return { type: 'FeatureCollection', features: sets.flatMap((s) => s.items.map((a) => accesFeature(a, s.name))) };
+}
+
+/** Un accès et le fichier importé dont il vient. */
+export interface AccesHit {
+  set: AccesSet;
+  a: Acces;
+}
+
+/** L'accès situé exactement à cet endroit (pour rouvrir sa fiche depuis une recherche récente). */
+export function findAccesAt(sets: AccesSet[], at: LonLat): AccesHit | null {
+  for (const set of sets) for (const a of set.items) if (a.lonlat[0] === at[0] && a.lonlat[1] === at[1]) return { set, a };
+  return null;
 }

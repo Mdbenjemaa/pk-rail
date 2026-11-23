@@ -11,7 +11,7 @@ import { Disclaimer, FeatureCard, FilterSheet, InfoSheet, MenuSheet, type Import
 import type { LocateState, Theme } from './components/state';
 import { TargetSheet, type Origin, type TargetState } from './components/TargetSheet';
 import { InstallBanner } from './components/Install';
-import { accesFeatures, loadAcces, readAccesSource, saveAcces, snapAcces, type AccesSet } from './lib/acces';
+import { accesFeature, accesFeatures, findAccesAt, loadAcces, readAccesSource, saveAcces, snapAcces, type AccesSet } from './lib/acces';
 import { fmtLine, fmtPk } from './lib/format';
 import { parsePk, pkRange, positionsAtPk } from './lib/pk';
 import { dataUpdate, loadCell, loadLine, loadManifest, type Manifest } from './lib/data';
@@ -42,6 +42,8 @@ export default function App() {
   const [ack, setAck] = useState(() => loadPref('pkr-ack-v1', false));
   const [panel, setPanel] = useState<Panel>('none');
   const [autourTab, setAutourTab] = useState<AutourTab>('autour');
+  /** Recherche pré-remplie à l'ouverture (« Liste » d'un fichier d'accès). */
+  const [searchInit, setSearchInit] = useState('');
   const [loc, setLoc] = useState<LocateState>({ phase: 'idle' });
   const [typeFiltre, setTypeFiltre] = useState(() => loadPref<string>('pkr-type-filtre', 'tout'));
   const [following, setFollowing] = useState(false);
@@ -335,6 +337,21 @@ export default function App() {
     focusOn([lon, lat], 11);
   };
 
+  /** Un de mes accès trouvé dans la recherche : on le montre sur la carte avec sa fiche. */
+  const openAcces = (at: LonLat) => {
+    const hit = findAccesAt(acces, at);
+    setPanel('none');
+    setFilters((f) => (f.acces ? f : { ...f, acces: true }));
+    if (hit) setPicked({ f: { ...accesFeature(hit.a, hit.set.name), layer: { id: 'u-acces' } } as unknown as MapGeoJSONFeature, at });
+    if (following) setMapFree(true);
+    focusOn(at, 17);
+  };
+
+  const openSearch = (query = '') => {
+    setSearchInit(query);
+    setPanel('search');
+  };
+
   const openAutour = (tab: AutourTab) => {
     setAutourTab(tab);
     setPanel('autour');
@@ -435,7 +452,7 @@ export default function App() {
           following={following}
           acquiring={loc.phase === 'acquiring'}
           mapFree={mapFree}
-          onSearch={() => setPanel('search')}
+          onSearch={() => openSearch()}
           onFollow={startFollowing}
           onLocate={locate}
           onRecenter={recenter}
@@ -447,8 +464,11 @@ export default function App() {
         <SearchScreen
           manifest={manifest}
           currentLine={chosenCode}
+          acces={acces}
+          initialQuery={searchInit}
           onGo={(at, zoom) => showOnMap(at, zoom)}
           onPk={(code, pk) => void goToPk(code, pk)}
+          onAcces={openAcces}
           onClose={() => setPanel('none')}
         />
       )}
@@ -485,6 +505,7 @@ export default function App() {
           onImport={(src) => void importAcces(src)}
           onDeleteSet={deleteSet}
           onShowSet={showSet}
+          onListSet={(set) => openSearch(set.name)}
           onClose={() => setPanel('none')}
         />
       )}

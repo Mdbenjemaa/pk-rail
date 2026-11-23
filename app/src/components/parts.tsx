@@ -71,6 +71,12 @@ const PATHS: Record<string, ReactNode> = {
     </>
   ),
   line: <path d="M4 20L20 4M7 20l-3-3M20 7l-3-3M9.5 14.5l-2-2M14.5 9.5l-2-2" {...STROKE} strokeWidth={2.2} />,
+  door: (
+    <>
+      <path d="M6 21V4.5A1.5 1.5 0 0 1 7.5 3h9A1.5 1.5 0 0 1 18 4.5V21M3 21h18" {...STROKE} strokeWidth={2.2} />
+      <circle cx="14.5" cy="12.5" r="1.3" fill="currentColor" />
+    </>
+  ),
   history: (
     <>
       <path d="M4 12a8 8 0 1 0 2.4-5.7L4 8.5" {...STROKE} strokeWidth={2.2} />

@@ -46,6 +46,7 @@ function AccesManager(p: {
   onImport: (src: File | string) => void;
   onDelete: (id: string) => void;
   onShow: (set: AccesSet) => void;
+  onList: (set: AccesSet) => void;
 }) {
   return (
     <div className="acces-box">
@@ -78,6 +79,9 @@ function AccesManager(p: {
                   {set.items.length} accès · {set.items.filter((a) => a.code).length} rattachés à une ligne
                 </small>
               </button>
+              <button className="btn btn-small" onClick={() => p.onList(set)} disabled={!set.items.length}>
+                Liste
+              </button>
               <button
                 className="btn btn-small btn-ghost"
                 onClick={() => {
@@ -104,6 +108,7 @@ export function FilterSheet(p: {
   onImport: (src: File | string) => void;
   onDeleteSet: (id: string) => void;
   onShowSet: (set: AccesSet) => void;
+  onListSet: (set: AccesSet) => void;
   onClose: () => void;
 }) {
   const groups = [...new Set(FILTERS.map((f) => f.group))];
@@ -141,7 +146,7 @@ export function FilterSheet(p: {
         Les signaux viennent d’OpenStreetMap : couverture partielle selon les secteurs, et pas toujours à jour.
       </p>
       {!PREVIEW && (
-        <AccesManager sets={p.acces} status={p.importStatus} onImport={p.onImport} onDelete={p.onDeleteSet} onShow={p.onShowSet} />
+        <AccesManager sets={p.acces} status={p.importStatus} onImport={p.onImport} onDelete={p.onDeleteSet} onShow={p.onShowSet} onList={p.onListSet} />
       )}
     </Modal>
   );

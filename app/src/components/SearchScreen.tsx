@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
+import type { AccesSet } from '../lib/acces';
 import { loadGares, type GareEntry, type Manifest } from '../lib/data';
 import { fmtLine, fmtPk } from '../lib/format';
 import type { LonLat } from '../lib/geo';
 import { parsePk, parsePkQuery } from '../lib/pk';
-import { bestIndexes, normName } from '../lib/search';
+import { bestIndexes, normName, searchAcces } from '../lib/search';
 import { Icon, type IconName } from './parts';
 
 const norm = (s: string) =>
@@ -20,6 +21,8 @@ interface SearchResult {
   at?: LonLat;
   zoom?: number;
   pk?: { code: string; pk: number };
+  /** Un de « mes accès » : on ouvre sa fiche. */
+  acces?: boolean;
 }
 
 const RECENTS_KEY = 'pkr-recherches';
@@ -40,6 +43,7 @@ function saveRecents(list: SearchResult[]) {
 }
 
 function iconFor(r: SearchResult): IconName {
+  if (r.acces) return 'door';
   if (r.pk) return 'pin';
   if (r.label.startsWith('Ligne ')) return 'line';
   return 'train';
@@ -49,7 +53,7 @@ function ResultRow({ r, icon, onChoose }: { r: SearchResult; icon?: IconName; on
   return (
     <li>
       <button className="result" disabled={!r.pk && !r.at} onClick={() => onChoose(r)}>
-        <span className="result-ico">
+        <span className={`result-ico ${r.acces && !icon ? 'acces' : ''}`}>
           <Icon name={icon ?? iconFor(r)} size={22} />
         </span>
         <span className="result-main">
@@ -61,16 +65,21 @@ function ResultRow({ r, icon, onChoose }: { r: SearchResult; icon?: IconName; on
   );
 }
 
-/** Écran « Rechercher » : une gare, une ligne, ou un PK (sur ta ligne, ou « 830000 45+200 »). */
+/** Écran « Rechercher » : une gare, une ligne, un PK (sur ta ligne, ou « 830000 45+200 »), ou un de mes accès. */
 export function SearchScreen(p: {
   manifest: Manifest | null;
   /** Ligne où l'on se trouve : un PK tapé seul s'y rapporte. */
   currentLine: string | null;
+  acces: AccesSet[];
+  /** Recherche déjà tapée à l'ouverture (le nom d'un fichier d'accès, pour voir sa liste). */
+  initialQuery?: string;
   onGo: (at: LonLat, zoom: number) => void;
   onPk: (code: string, pk: number) => void;
+  onAcces: (at: LonLat) => void;
   onClose: () => void;
 }) {
-  const [q, setQ] = useState('');
+  const [q, setQ] = useState(p.initialQuery ?? '');
+  const [allAcces, setAllAcces] = useState(!!p.initialQuery);
   const [gares, setGares] = useState<GareEntry[] | null>(null);
   const [recents, setRecents] = useState<SearchResult[]>(() => loadRecents());
   // Noms de gares préparés une fois (accents, « Saint » → « St ») pour chercher vite à chaque lettre.
@@ -83,10 +92,10 @@ export function SearchScreen(p: {
   }, []);
 
   const nq = norm(q);
-  const results: SearchResult[] = [];
+  const pkResults: SearchResult[] = [];
   const pkq = parsePkQuery(q);
   if (pkq && p.manifest?.lines[pkq.code]) {
-    results.push({
+    pkResults.push({
       label: `PK ${fmtPk(pkq.pk)} · ligne ${fmtLine(pkq.code)}`,
       sub: p.manifest.lines[pkq.code].n ?? 'Aller à ce PK',
       pk: pkq,
@@ -97,34 +106,49 @@ export function SearchScreen(p: {
   const alonePk = pkAlone ? parsePk(q) : null;
   if (alonePk !== null) {
     if (p.currentLine && p.manifest?.lines[p.currentLine]) {
-      results.push({
+      pkResults.push({
         label: `Aller au PK ${fmtPk(alonePk)} · ligne ${fmtLine(p.currentLine)}`,
         sub: `${p.manifest.lines[p.currentLine].n ?? ''} (ta ligne)`,
         pk: { code: p.currentLine, pk: alonePk },
       });
     } else {
-      results.push({ label: `PK ${fmtPk(alonePk)} : sur quelle ligne ?`, sub: 'Repère-toi d’abord, ou tape la ligne puis le PK : 830000 45+200' });
+      pkResults.push({ label: `PK ${fmtPk(alonePk)} : sur quelle ligne ?`, sub: 'Repère-toi d’abord, ou tape la ligne puis le PK : 830000 45+200' });
     }
   }
-  if (nq.length >= 2 && !pkq && !(alonePk !== null && /[+,.]|pk/i.test(q))) {
+  const textQuery = nq.length >= 2 && !pkq && !(alonePk !== null && /[+,.]|pk/i.test(q));
+  // Mes accès : par leur nom, leur description ou le nom du fichier importé.
+  const found = textQuery ? searchAcces(q, p.acces, allAcces ? 300 : 6) : { hits: [], total: 0, exact: false };
+  const accesResults: SearchResult[] = found.hits.map(({ set, a }) => ({
+    label: a.name || 'Accès sans nom',
+    // Espaces insécables : « ligne 830 000 » et « PK 28+790 » ne se coupent pas en fin de ligne.
+    sub: [`Accès · ${set.name}`, a.code ? `ligne\u00a0${fmtLine(a.code).replace(/ /g, '\u00a0')}` : '', a.pk !== undefined ? `PK\u00a0${fmtPk(a.pk)}` : ''].filter(Boolean).join(' · '),
+    at: a.lonlat,
+    zoom: 17,
+    acces: true,
+  }));
+  const placeResults: SearchResult[] = [];
+  if (textQuery) {
     const digits = nq.replace(/\s/g, '');
     if (/^\d{3,6}$/.test(digits) && p.manifest) {
       for (const [code, info] of Object.entries(p.manifest.lines)) {
-        if (code.startsWith(digits) && results.length < 4) {
+        if (code.startsWith(digits) && placeResults.length < 3) {
           const g = gares?.find((x) => x[3] === code);
-          if (g) results.push({ label: `Ligne ${fmtLine(code)}`, sub: info.n ?? '', at: [g[1], g[2]], zoom: 11 });
+          if (g) placeResults.push({ label: `Ligne ${fmtLine(code)}`, sub: info.n ?? '', at: [g[1], g[2]], zoom: 11 });
         }
       }
     }
-    // Gares : début du nom ou d'un mot d'abord, puis noms approchants (fautes de frappe tolérées).
-    for (const i of bestIndexes(q, garesNorm, Math.max(0, 8 - results.length))) {
+    // Gares : début du nom ou d'un mot d'abord, puis noms approchants (fautes de frappe tolérées),
+    // sauf si un de mes accès porte déjà ce nom : pas de gares « approchantes » qui encombrent.
+    for (const i of bestIndexes(q, garesNorm, 6, found.exact ? 1 : Infinity)) {
       const g = gares![i];
-      results.push({ label: g[0], sub: `Gare · ligne ${fmtLine(g[3])}`, at: [g[1], g[2]], zoom: 15 });
+      placeResults.push({ label: g[0], sub: `Gare · ligne ${fmtLine(g[3])}`, at: [g[1], g[2]], zoom: 15 });
     }
   }
+  const results = [...pkResults, ...accesResults, ...placeResults];
 
   const choose = (r: SearchResult) => {
     if (r.pk) p.onPk(r.pk.code, r.pk.pk);
+    else if (r.acces && r.at) p.onAcces(r.at);
     else if (r.at) p.onGo(r.at, r.zoom ?? 15);
     else return;
     const next = [r, ...recents.filter((x) => x.label !== r.label || x.sub !== r.sub)].slice(0, 6);
@@ -143,8 +167,8 @@ export function SearchScreen(p: {
           className="search-input"
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          placeholder="Gare, ligne ou PK"
-          aria-label="Rechercher une gare, une ligne ou un PK"
+          placeholder={p.acces.length ? 'Gare, ligne, PK ou accès' : 'Gare, ligne ou PK'}
+          aria-label="Rechercher une gare, une ligne, un PK ou un de mes accès"
           enterKeyHint="search"
           autoFocus
           onKeyDown={(e) => {
@@ -170,6 +194,11 @@ export function SearchScreen(p: {
             <span>
               <Icon name="line" size={18} /> une ligne et un PK : 830000 45+200
             </span>
+            {p.acces.length > 0 && (
+              <span>
+                <Icon name="door" size={18} /> un de tes accès : son nom, ou celui du fichier importé
+              </span>
+            )}
           </div>
         )}
         {empty && recents.length > 0 && (
@@ -193,12 +222,46 @@ export function SearchScreen(p: {
             </ul>
           </>
         )}
-        {results.length > 0 && (
+        {pkResults.length > 0 && (
           <ul className="results-list">
-            {results.map((r, i) => (
-              <ResultRow key={i} r={r} onChoose={choose} />
+            {pkResults.map((r, i) => (
+              <ResultRow key={`pk-${i}`} r={r} onChoose={choose} />
             ))}
           </ul>
+        )}
+        {accesResults.length > 0 && (
+          <>
+            <div className="results-head">
+              <span>Mes accès · {found.total}</span>
+            </div>
+            <ul className="results-list">
+              {accesResults.map((r, i) => (
+                <ResultRow key={`a-${i}`} r={r} onChoose={choose} />
+              ))}
+            </ul>
+            {found.total > accesResults.length &&
+              (allAcces ? (
+                <p className="muted center">Et {found.total - accesResults.length} autres : précise ta recherche.</p>
+              ) : (
+                <button className="btn wide more-btn" onClick={() => setAllAcces(true)}>
+                  Voir les {found.total} accès
+                </button>
+              ))}
+          </>
+        )}
+        {placeResults.length > 0 && (
+          <>
+            {accesResults.length > 0 && (
+              <div className="results-head">
+                <span>Gares et lignes</span>
+              </div>
+            )}
+            <ul className="results-list">
+              {placeResults.map((r, i) => (
+                <ResultRow key={`g-${i}`} r={r} onChoose={choose} />
+              ))}
+            </ul>
+          </>
         )}
         {!empty && nq.length >= 2 && results.length === 0 && gares && <p className="muted center">Rien trouvé pour « {q.trim()} ».</p>}
       </div>

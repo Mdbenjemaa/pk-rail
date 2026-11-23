@@ -1,3 +1,4 @@
+import type { AccesHit, AccesSet } from './acces';
 /**
  * Recherche de gares tolérante : accents, tirets, « Saint » / « St », fautes de frappe.
  */
@@ -70,13 +71,16 @@ export function scoreNorm(q: string, n: string): number | null {
   return best <= max ? 2 + best : null;
 }
 
-/** Indices des meilleurs noms (déjà passés par normName), du plus proche au moins proche. */
-export function bestIndexes(query: string, normNames: string[], limit: number): number[] {
+/**
+ * Indices des meilleurs noms (déjà passés par normName), du plus proche au moins proche.
+ * `maxScore` = 1 : seulement les noms qui commencent par la recherche (ou dont un mot commence par elle).
+ */
+export function bestIndexes(query: string, normNames: string[], limit: number, maxScore = Infinity): number[] {
   const q = normName(query);
   const scored: { s: number; i: number }[] = [];
   normNames.forEach((n, i) => {
     const s = scoreNorm(q, n);
-    if (s !== null) scored.push({ s, i });
+    if (s !== null && s <= maxScore) scored.push({ s, i });
   });
   scored.sort((a, b) => a.s - b.s || a.i - b.i);
   return scored.slice(0, limit).map((x) => x.i);
@@ -85,4 +89,24 @@ export function bestIndexes(query: string, normNames: string[], limit: number): 
 /** Les meilleurs éléments pour une recherche, du plus proche au moins proche. */
 export function bestMatches<T>(query: string, items: T[], nameOf: (it: T) => string, limit: number): T[] {
   return bestIndexes(query, items.map((it) => normName(nameOf(it))), limit).map((i) => items[i]);
+}
+
+/**
+ * Mes accès qui correspondent à la recherche : par leur nom (début, mot, fautes de frappe tolérées),
+ * puis par leur description, puis par le nom du fichier importé (pour lister tous les accès d'un fichier).
+ */
+export function searchAcces(query: string, sets: AccesSet[], limit: number): { hits: AccesHit[]; total: number; exact: boolean } {
+  const q = normName(query);
+  if (q.length < 2) return { hits: [], total: 0, exact: false };
+  const scored: (AccesHit & { s: number })[] = [];
+  for (const set of sets) {
+    const inSet = normName(set.name).includes(q);
+    for (const a of set.items) {
+      const s = scoreNorm(q, normName(a.name)) ?? (normName(a.desc).includes(q) ? 5 : inSet ? 6 : null);
+      if (s !== null) scored.push({ s, set, a });
+    }
+  }
+  scored.sort((x, y) => x.s - y.s || x.a.name.localeCompare(y.a.name, 'fr', { numeric: true }));
+  // « exact » : au moins un accès dont le nom commence par la recherche (pas seulement approchant).
+  return { hits: scored.slice(0, limit).map(({ set, a }) => ({ set, a })), total: scored.length, exact: scored.some((x) => x.s <= 1) };
 }
