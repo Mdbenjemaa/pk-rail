@@ -111,11 +111,8 @@ export function parsePkQuery(q: string): { code: string; pk: number } | null {
 export function navLinks(at: LonLat): { label: string; href: string }[] {
   const lat = at[1].toFixed(6);
   const lon = at[0].toFixed(6);
-  return [
-    { label: 'Plans', href: `https://maps.apple.com/?daddr=${lat},${lon}&dirflg=d` },
-    { label: 'Google Maps', href: `https://www.google.com/maps/dir/?api=1&destination=${lat},${lon}&travelmode=driving` },
-    { label: 'Waze', href: `https://waze.com/ul?ll=${lat},${lon}&navigate=yes` },
-  ];
+  // Google Maps seulement : ouvre l'appli Google Maps si elle est installée, sinon le site.
+  return [{ label: 'Itinéraire Google Maps', href: `https://www.google.com/maps/dir/?api=1&destination=${lat},${lon}&travelmode=driving` }];
 }
 
 /** Tracé de la ligne entre deux PK (un morceau par tronçon concerné), pour dessiner une zone. */

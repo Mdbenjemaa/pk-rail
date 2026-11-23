@@ -7,6 +7,7 @@ import type { AccesSet } from '../lib/acces';
 import { fmtLine, fmtPk } from '../lib/format';
 import { parsePk, parsePkQuery } from '../lib/pk';
 import { NavLinks } from './TargetSheet';
+import { RFN_CREDIT, RFN_URL, signalImage, SIGNAL_ICONS } from '../lib/signaux';
 import { InstallSteps } from './Install';
 import { MyMapsLink } from './MyMapsLink';
 import { installMode } from '../lib/install';
@@ -227,6 +228,13 @@ export function InfoSheet(p: { manifest: Manifest | null; onClose: () => void })
           </li>
         ))}
         <li>Fond plan : OpenFreeMap © OpenMapTiles, données © OpenStreetMap. Photo aérienne : © IGN (Licence Ouverte).</li>
+        <li>
+          {RFN_CREDIT} —{' '}
+          <a href={RFN_URL} target="_blank" rel="noreferrer">
+            {RFN_URL.replace(/^https?:\/\//, '')}
+          </a>
+          . L’appli est elle aussi sous licence GPL-3.0.
+        </li>
       </ul>
       <p className="muted small">
         Données SNCF Réseau publiées entre 2020 et 2022 : des modifications récentes du réseau peuvent manquer. Version des
@@ -286,7 +294,8 @@ export function FeatureCard(p: {
   const f = p.feature;
   const pr = f.properties as Record<string, string | undefined>;
   const layer = f.layer.id;
-  const title = LAYER_TITLE[layer] ?? 'Élément';
+  // « -ic » : même couche, signaux dessinés.
+  const title = LAYER_TITLE[layer.replace(/-ic$/, '')] ?? 'Élément';
   let name = pr.n ?? pr.l ?? '';
   if (layer.startsWith('r-pk')) name = `PK ${pr.p}`;
   if (layer === 'r-bornes') name = `Borne ${pr.p}`;
@@ -294,6 +303,7 @@ export function FeatureCard(p: {
   if (layer.startsWith('r-lignes')) name = `Ligne ${fmtLine(pr.c ?? '')}`;
   const lineName = pr.c ? p.manifest?.lines[pr.c]?.n : null;
   const point = f.geometry.type === 'Point' ? ((f.geometry as Point).coordinates as LonLat) : p.at;
+  const dessin = SIGNAL_ICONS && pr.ic ? pr.ic : null;
 
   return (
     <section className="card">
@@ -306,6 +316,14 @@ export function FeatureCard(p: {
           ×
         </button>
       </div>
+      {dessin && (
+        <figure className="sig-figure">
+          <img src={signalImage(dessin)} alt={`Dessin du signal : ${name}`} />
+          <figcaption>
+            Dessin type de ce signal. Le signal réel peut différer : vérifie toujours sur le terrain.
+          </figcaption>
+        </figure>
+      )}
       <dl className="facts">
         {pr.pk && (
           <>

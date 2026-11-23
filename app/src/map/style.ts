@@ -1,5 +1,6 @@
 import type {
   ExpressionSpecification,
+  FilterSpecification,
   LayerSpecification,
   SourceSpecification,
   StyleSpecification,
@@ -8,6 +9,7 @@ import type { FeatureCollection } from 'geojson';
 import { DATA_URL, PMTILES_URL } from '../lib/data';
 import { PREVIEW } from '../lib/env';
 import { FILTERS, type Filters } from '../lib/layers';
+import { RFN_SPRITE, SIGNAL_ICONS } from '../lib/signaux';
 
 export type Basemap = 'plan' | 'photo' | 'aucun';
 
@@ -82,18 +84,42 @@ export function railLayers(basemap: Basemap, filters: Filters): LayerSpecificati
   const text = (size: number, bold = false) => ({ 'text-font': bold ? BOLD : REG, 'text-size': size });
   const paintText = { 'text-color': ink, 'text-halo-color': halo, 'text-halo-width': 1.6 };
 
+  // Signaux : le dessin du vrai signal quand on le connaît (propriété « ic »), sinon une pastille de couleur.
+  const sansDessin = (kind: string): FilterSpecification =>
+    SIGNAL_ICONS ? ['all', ['==', ['get', 'k'], kind], ['!', ['has', 'ic']]] : ['==', ['get', 'k'], kind];
   const sig = (id: string, kind: string, color: string, stroke: string, key: keyof Filters, labelMin: number): LayerSpecification[] => [
     {
       id: `r-sig-${id}`, type: 'circle', source: 'rail', 'source-layer': 'signaux', minzoom: 13,
-      filter: ['==', ['get', 'k'], kind], layout: { visibility: vis(key) },
+      filter: sansDessin(kind), layout: { visibility: vis(key) },
       paint: { 'circle-radius': ['interpolate', ['linear'], ['zoom'], 13, 3, 17, 7], 'circle-color': color, 'circle-stroke-color': stroke, 'circle-stroke-width': 1.5 },
     },
     {
       id: `r-sig-${id}-label`, type: 'symbol', source: 'rail', 'source-layer': 'signaux', minzoom: labelMin,
-      filter: ['==', ['get', 'k'], kind],
+      filter: sansDessin(kind),
       layout: { visibility: vis(key), 'text-field': ['get', 'l'], ...text(12, true), 'text-offset': [0, 1.1], 'text-anchor': 'top', 'text-optional': true },
       paint: { ...paintText, 'text-color': photo ? '#ffffff' : color === '#ffffff' ? '#111827' : color },
     },
+    ...(SIGNAL_ICONS
+      ? ([
+          {
+            id: `r-sig-${id}-ic`, type: 'symbol', source: 'rail', 'source-layer': 'signaux', minzoom: 13,
+            filter: ['all', ['==', ['get', 'k'], kind], ['has', 'ic']],
+            layout: {
+              visibility: vis(key),
+              'icon-image': ['concat', 'rfn:', ['get', 'ic']],
+              'icon-size': ['interpolate', ['linear'], ['zoom'], 13, 0.16, 16, 0.3, 19, 0.55],
+              'icon-anchor': 'bottom',
+              'icon-allow-overlap': true,
+              'text-field': ['step', ['zoom'], '', labelMin, ['get', 'l']],
+              ...text(12, true),
+              'text-anchor': 'left',
+              'text-offset': [0.9, -0.8],
+              'text-optional': true,
+            },
+            paint: { ...paintText, 'text-color': photo ? '#ffffff' : color === '#ffffff' ? '#111827' : color },
+          },
+        ] as LayerSpecification[])
+      : []),
   ];
 
   const speedColor: ExpressionSpecification = ['step', ['get', 'v'], '#9ca3af', 41, '#60a5fa', 81, '#22c55e', 121, '#eab308', 161, '#f97316', 221, '#dc2626'];
@@ -147,6 +173,7 @@ export function railLayers(basemap: Basemap, filters: Filters): LayerSpecificati
 export const INTERACTIVE_LAYERS = [
   'u-target', 'u-acces',
   'r-gares', 'r-pn', 'r-sst', 'r-ouvrages', 'r-bornes', 'r-pk-km', 'r-pk-hm',
+  'r-sig-carre-ic', 'r-sig-avert-ic', 'r-sig-vitesse-ic', 'r-sig-elec-ic', 'r-sig-autre-ic',
   'r-sig-carre', 'r-sig-avert', 'r-sig-vitesse', 'r-sig-elec', 'r-sig-autre',
   'r-quais', 'r-voies', 'r-tunnels', 'r-lignes', 'r-lignes-autres',
 ];
@@ -216,10 +243,15 @@ export async function buildStyle(basemap: Basemap, filters: Filters, o: Overlays
     baseLayers.push({ id: 'ortho', type: 'raster', source: 'ortho' });
   }
 
+  // Planche du fond plan (« default ») et planche des signaux (« rfn: »).
+  const sprites = [
+    ...(typeof sprite === 'string' ? [{ id: 'default', url: sprite }] : (sprite ?? [])),
+    ...(SIGNAL_ICONS ? [{ id: 'rfn', url: RFN_SPRITE }] : []),
+  ];
   return {
     version: 8,
     glyphs: GLYPHS,
-    ...(sprite ? { sprite } : {}),
+    ...(sprites.length ? { sprite: sprites } : {}),
     sources,
     layers: [
     ...baseLayers,

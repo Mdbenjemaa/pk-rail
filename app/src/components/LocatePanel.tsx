@@ -40,6 +40,9 @@ interface Props {
   onToggleExpand: () => void;
   onChoose: (code: string) => void;
   onGoPk: (code: string, text: string) => void;
+  /** Filtre des listes PK croissants / décroissants (tout, sig, pn, gare, acces). */
+  typeFiltre: string;
+  onTypeFiltre: (key: string) => void;
   acces: AccesSet[];
   onFocus: (at: [number, number]) => void;
   onStopAcquire: () => void;
@@ -92,6 +95,44 @@ function Badge({ kind }: { kind: string }) {
     <span className="badge" style={{ background: b.color }} title={b.name}>
       {b.text}
     </span>
+  );
+}
+
+/** Filtres des listes de part et d'autre du PK. */
+const TYPES: { key: string; label: string; test: (kind: string) => boolean }[] = [
+  { key: 'tout', label: 'Tout', test: () => true },
+  { key: 'sig', label: 'Signaux', test: (k) => k.startsWith('sig_') },
+  { key: 'pn', label: 'PN', test: (k) => k === 'pn' },
+  { key: 'gare', label: 'Gares', test: (k) => k === 'gare' || k === 'quai' },
+  { key: 'acces', label: 'Accès', test: (k) => k === 'acces' },
+];
+
+/** Liste repliable : touche le titre pour l'ouvrir ou la fermer (ouverte au départ). */
+function Deroulant({ title, items, onFocus, prefix }: {
+  title: string;
+  items: AroundItem[];
+  onFocus: (at: [number, number]) => void;
+  prefix: string;
+}) {
+  const [open, setOpen] = useState(true);
+  return (
+    <div className={`deroulant ${open ? 'open' : ''}`}>
+      <button className="deroulant-head" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
+        <span>{title}</span>
+        <span className="deroulant-n">{items.length}</span>
+        <span className="deroulant-chev" aria-hidden="true">▾</span>
+      </button>
+      {open &&
+        (items.length ? (
+          <ul className="items">
+            {items.map((it, i) => (
+              <ItemRow key={`${prefix}-${i}`} it={it} onFocus={onFocus} />
+            ))}
+          </ul>
+        ) : (
+          <p className="muted small deroulant-vide">Rien dans les 15 km (selon les filtres).</p>
+        ))}
+    </div>
   );
 }
 
@@ -212,8 +253,11 @@ export function LocatePanel(p: Props) {
           .map((a): LinePoint => [a.pk!, 'acces', a.name, a.desc.split('\n')[0] ?? '', a.lonlat[0], a.lonlat[1]]),
       )
     : [];
+  const typeTest = (TYPES.find((t) => t.key === p.typeFiltre) ?? TYPES[0]).test;
   const around =
-    doc && chosen ? aroundPk({ ...doc, points: doc.points.concat(accesHere) }, chosen.pk, (k) => kindVisible(p.filters, k)) : null;
+    doc && chosen
+      ? aroundPk({ ...doc, points: doc.points.concat(accesHere) }, chosen.pk, (k) => kindVisible(p.filters, k) && typeTest(k))
+      : null;
   const vmax = doc && chosen ? sectionAt(doc, 'vmax', chosen.pk) : null;
   const elec = doc && chosen ? sectionAt(doc, 'elec', chosen.pk) : null;
   const cant = doc && chosen ? sectionAt(doc, 'cant', chosen.pk) : null;
@@ -354,30 +398,15 @@ export function LocatePanel(p: Props) {
         )}
         {around && (
           <div className="sides">
-            <div>
-              <div className="field-label">↑ Vers les PK croissants</div>
-              {around.ahead.length ? (
-                <ul className="items">
-                  {around.ahead.map((it, i) => (
-                    <ItemRow key={`a-${i}`} it={it} onFocus={p.onFocus} />
-                  ))}
-                </ul>
-              ) : (
-                <p className="muted small">Rien dans les 15 km (selon les filtres).</p>
-              )}
+            <div className="chips small-chips type-chips" role="group" aria-label="Filtrer par type">
+              {TYPES.filter((t) => t.key !== 'acces' || accesHere.length > 0 || p.typeFiltre === 'acces').map((t) => (
+                <button key={t.key} className={`chip ${p.typeFiltre === t.key ? 'on' : ''}`} onClick={() => p.onTypeFiltre(t.key)}>
+                  {t.label}
+                </button>
+              ))}
             </div>
-            <div>
-              <div className="field-label">↓ Vers les PK décroissants</div>
-              {around.behind.length ? (
-                <ul className="items">
-                  {around.behind.map((it, i) => (
-                    <ItemRow key={`b-${i}`} it={it} onFocus={p.onFocus} />
-                  ))}
-                </ul>
-              ) : (
-                <p className="muted small">Rien dans les 15 km (selon les filtres).</p>
-              )}
-            </div>
+            <Deroulant title="↑ Vers les PK croissants" items={around.ahead} onFocus={p.onFocus} prefix="a" />
+            <Deroulant title="↓ Vers les PK décroissants" items={around.behind} onFocus={p.onFocus} prefix="b" />
           </div>
         )}
         <p className="disclaimer">

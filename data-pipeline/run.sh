@@ -4,7 +4,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 APP_DATA=../app/public/data
-pip install --quiet pyproj shapely osmium pmtiles
+pip install --quiet pyproj shapely osmium pmtiles pillow
 npm install --silent
 
 # 1. Données SNCF Réseau (open data)
@@ -22,6 +22,9 @@ RR_CONTROLE=1 python3 build_sncf.py raw/sncf build-controle build/osm.json
 cp build-controle/controle_osm.json build/
 python3 build_sncf.py raw/sncf build build/osm.json
 python3 build_products.py build "$APP_DATA" tiles-src      # cases, fiches de ligne, couches
+# Dessins des signaux (bibliothèque GPL-3.0 de Nicolas Wurtz), réduits à ceux que les données utilisent
+[ -d raw/signalisation-rfn-svg ] || git clone --depth 1 https://github.com/nicolaswurtz/signalisation-rfn-svg raw/signalisation-rfn-svg
+python3 ../scripts/build_signal_assets.py raw/signalisation-rfn-svg tiles-src/signal_icons.json ../app/public
 node --max-old-space-size=6000 tile.mjs tiles-src build/tiles.bin
 python3 pack_pmtiles.py build/tiles.bin "$APP_DATA/rail.pmtiles"
 python3 - <<'PY'

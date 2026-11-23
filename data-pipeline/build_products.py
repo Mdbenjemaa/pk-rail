@@ -120,6 +120,78 @@ def classify(tags):
     return 'autre', 'Signal', ref
 
 
+# ---------- Dessin de chaque signal (bibliothèque nicolaswurtz/signalisation-rfn-svg, GPL-3.0) ----------
+RFN_ICONS = {l.strip() for l in open(Path(__file__).resolve().parent / 'rfn_icons.txt') if l.strip() and not l.startswith('#')}
+RFN_MAIN = {'FR:C': 'CARRE', 'FR:CARRE': 'CARRE', 'FR:S': 'S', 'FR:CV': 'CV', 'FR:Cv': 'CV', 'FR:GA': 'GA'}
+RFN_DISTANT = {'FR:A': 'A', 'FR:mirliton': 'MIRLITON1', 'FR:D': 'D'}
+RFN_ELEC = {'FR:SECT': 'SECT', 'FR:REV': 'REV', 'FR:CC_EXE': 'CC EXE', 'FR:CC_FIN': 'CC FIN', 'FR:BP_DIS': 'BP DIS',
+            'FR:BP_EXE': 'BP EXE', 'FR:BP_FIN': 'BP FIN', 'FR:end_of_catenary': 'FIN CAT'}
+RFN_OTHER = {('railway:signal:stop', 'FR:ARRET'): 'ARRET', ('railway:signal:stop', 'FR:ATC'): 'ATC',
+             ('railway:signal:route', 'FR:ID'): 'ID', ('railway:signal:shunting', 'FR:G'): 'G',
+             ('railway:signal:shunting', 'FR:LM'): 'LM', ('railway:signal:train_protection', 'FR:REP_TVM'): 'REP TGV',
+             ('railway:signal:whistle', 'FR:S'): 'SIFFLER', ('railway:signal:station_distant', 'FR:APPROCHE_ETS'): 'APPROETSA'}
+
+
+def _speed(tags, key):
+    """Vitesse inscrite sur la pancarte (première valeur), ou chaîne vide."""
+    for k in (f'{key}:speed', f'{key}:fixed:speed'):
+        v = tags.get(k)
+        if v:
+            m = re.match(r'\s*(\d{1,3})', v.split(';')[0])
+            if m:
+                return m.group(1)
+    return ''
+
+
+def _with_speed(base, sp):
+    """Dessin avec la vitesse inscrite s'il existe, sinon le modèle sans vitesse s'il existe."""
+    if sp and f'{base} {sp}' in RFN_ICONS:
+        return f'{base} {sp}'
+    return base if base in RFN_ICONS and not sp else None
+
+
+def rfn_icon(tags):
+    """Nom du dessin RFN de ce signal OpenStreetMap, ou None s'il n'y en a pas de sûr."""
+    main = tags.get('railway:signal:main')
+    distant = tags.get('railway:signal:distant')
+    if main in RFN_MAIN:
+        base = RFN_MAIN[main]
+        # Carré ou sémaphore qui porte aussi l'avertissement du signal suivant.
+        if distant == 'FR:A' and f'{base} A' in RFN_ICONS:
+            return f'{base} A'
+        return base
+    if main:
+        return None
+    if distant in RFN_DISTANT:
+        return RFN_DISTANT[distant]
+    v = tags.get('railway:signal:speed_limit_distant')
+    if v in ('FR:TIV-D', 'FR:TIV-D_FIXE', 'FR:speed_indicator'):
+        key = 'railway:signal:speed_limit_distant'
+        sp = _speed(tags, key)
+        if tags.get(f'{key}:form') == 'light':
+            return _with_speed('TIV D MOB', sp)
+        kind = tags.get(f'{key}:type')
+        base = {'FR:B': 'TIVD B FIX', 'FR:C': 'TIVD C FIX'}.get(kind, 'TIV D FIXE')
+        return _with_speed(base, sp)
+    v = tags.get('railway:signal:speed_limit_reminder')
+    if v == 'FR:TIV-R':
+        return _with_speed('TIV R MOB', _speed(tags, 'railway:signal:speed_limit_reminder'))
+    v = tags.get('railway:signal:speed_limit')
+    if v == 'FR:Z':
+        return 'Z'
+    if v == 'FR:R':
+        return 'R'
+    if v in ('FR:Chevron', 'FR:CHEVRON'):
+        return {'downwards': 'CHEVRON BAS', 'upwards': 'CHEVRON HAUT'}.get(tags.get('railway:signal:speed_limit:type', ''))
+    v = tags.get('railway:signal:electricity')
+    if v in RFN_ELEC:
+        return RFN_ELEC[v]
+    for (k, val), icon in RFN_OTHER.items():
+        if tags.get(k) == val:
+            return icon
+    return None
+
+
 line_points = defaultdict(list)  # code -> [pk, kind, label, detail, lon, lat, (pk2)]
 tile_layers = defaultdict(list)
 
@@ -129,6 +201,7 @@ def feat(geom_type, coords, props):
 
 
 sig_counts = defaultdict(int)
+icon_counts = defaultdict(int)
 snapped_signals = 0
 for s in osm['signals']:
     cat, label, ref = classify(s['tags'])
@@ -137,6 +210,10 @@ for s in osm['signals']:
     sn = snap(lon, lat, 30)
     pk = None
     props = {'k': cat, 'l': f"{label} {ref}".strip()}
+    icon = rfn_icon(s['tags'])
+    if icon and icon in RFN_ICONS:
+        props['ic'] = icon
+        icon_counts[icon] += 1
     if sn:
         i, d, pk = sn
         snapped_signals += 1
@@ -145,6 +222,8 @@ for s in osm['signals']:
         line_points[code].append([round(pk, 3), f'sig_{cat}', props['l'], '', lon, lat])
     tile_layers['signaux'].append(feat('Point', [lon, lat], props))
 print('signaux', dict(sig_counts), 'rattachés', snapped_signals)
+print('dessins RFN', sum(icon_counts.values()), 'signaux,', len(icon_counts), 'dessins différents')
+json.dump(sorted(icon_counts), open(TSRC / 'signal_icons.json', 'w'), ensure_ascii=False)
 
 # ---------- Bornes OSM : contrôle indépendant des PK calculés ----------
 ms_err = []
