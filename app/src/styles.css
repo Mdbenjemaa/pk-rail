@@ -382,3 +382,21 @@ button:disabled { cursor: default; }
   .maplibregl-ctrl-bottom-left { bottom: 0; left: 460px; }
   .maplibregl-ctrl-bottom-right { bottom: 0; }
 }
+
+/* Mes accès : liste par fichier, rangée par ligne et PK */
+.acces-search { width: 100%; height: 48px; margin: 12px 0 2px; padding: 0 14px; border: 1.5px solid var(--line); border-radius: 14px; background: var(--field, var(--bg)); color: var(--ink); font-size: 16px; }
+.acces-file { margin-top: 14px; }
+.acces-file-head { display: flex; align-items: center; gap: 8px; padding: 4px 0 8px; }
+.acces-file-head > span { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.acces-file-head b { overflow-wrap: anywhere; }
+.acces-file-head small { color: var(--muted); font-size: 12.5px; }
+.acces-list { list-style: none; margin: 8px 0 0; padding: 0; border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+.acces-file .acces-list { margin-top: 0; }
+.acces-row { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 58px; padding: 8px 12px; border: 0; border-top: 1px solid var(--line); background: none; color: inherit; text-align: left; }
+.acces-list li:first-child .acces-row { border-top: 0; }
+.acces-ico { width: 38px; height: 38px; flex: none; display: grid; place-items: center; border-radius: 10px; background: #d1fae5; color: #047857; }
+.acces-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.acces-main b { font-size: 16px; }
+.acces-main small { color: var(--muted); font-size: 12.5px; }
+.acces-pk { font-size: 15px; font-weight: 800; font-variant-numeric: tabular-nums; white-space: nowrap; }
+:root.night .acces-ico { background: #064e3b; color: #6ee7b7; }

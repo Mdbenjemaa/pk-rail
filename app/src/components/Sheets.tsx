@@ -1,9 +1,11 @@
 import { PREVIEW } from '../lib/env';
+import { useState } from 'react';
 import type { Point } from 'geojson';
 import type { MapGeoJSONFeature } from 'maplibre-gl';
 import type { Manifest } from '../lib/data';
-import type { AccesSet } from '../lib/acces';
-import { fmtLine } from '../lib/format';
+import type { Acces, AccesSet } from '../lib/acces';
+import { fmtLine, fmtPk } from '../lib/format';
+import { searchAcces } from '../lib/search';
 import { NavLinks } from './TargetSheet';
 import { RFN_CREDIT, RFN_URL, signalImage, SIGNAL_ICONS } from '../lib/signaux';
 import { InstallSteps, useInstallMode } from './Install';
@@ -39,21 +41,14 @@ export interface ImportStatus {
   error?: boolean;
 }
 
-/** Import et liste des cartes d'accès enregistrées sur le téléphone. */
-function AccesManager(p: {
-  sets: AccesSet[];
-  status: ImportStatus | null;
-  onImport: (src: File | string) => void;
-  onDelete: (id: string) => void;
-  onShow: (set: AccesSet) => void;
-  onList: (set: AccesSet) => void;
-}) {
+/** Import d'une carte d'accès : fichier KML/KMZ ou lien Google My Maps. */
+function AccesImport(p: { status: ImportStatus | null; onImport: (src: File | string) => void; first: boolean }) {
   return (
     <div className="acces-box">
-      <div className="field-label">Mes accès</div>
+      <div className="field-label">{p.first ? 'Importer mes accès' : 'Ajouter d’autres accès'}</div>
       <p className="muted small">
-        Importe une carte d’accès : fichier KML ou KMZ (Google My Maps : menu ⋮ › « Télécharger KML »), ou directement
-        le lien de la carte Google My Maps. Chaque accès reçoit sa ligne et son PK. La carte reste uniquement sur ce téléphone.
+        Fichier KML ou KMZ (Google My Maps : menu ⋮ › « Télécharger KML »), ou directement le lien de la carte Google My
+        Maps. Chaque accès reçoit sa ligne et son PK. La carte reste uniquement sur ce téléphone.
       </p>
       <label className={`btn file-btn ${p.status?.busy ? 'disabled' : ''}`}>
         {p.status?.busy ? 'Import en cours…' : 'Importer un fichier KML ou KMZ'}
@@ -69,32 +64,132 @@ function AccesManager(p: {
       </label>
       <MyMapsLink busy={p.status?.busy} onSubmit={p.onImport} />
       {p.status && !p.status.busy && <p className={p.status.error ? 'error small' : 'ok small'}>{p.status.text}</p>}
-      {p.sets.length > 0 && (
-        <ul className="sets">
-          {p.sets.map((set) => (
-            <li key={set.id}>
-              <button className="set-name" onClick={() => p.onShow(set)}>
-                <b>{set.name}</b>
-                <small>
-                  {set.items.length} accès · {set.items.filter((a) => a.code).length} rattachés à une ligne
-                </small>
-              </button>
-              <button className="btn btn-small" onClick={() => p.onList(set)} disabled={!set.items.length}>
-                Liste
-              </button>
-              <button
-                className="btn btn-small btn-ghost"
-                onClick={() => {
-                  if (window.confirm(`Supprimer « ${set.name} » de ce téléphone ?`)) p.onDelete(set.id);
-                }}
-              >
-                Supprimer
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
     </div>
+  );
+}
+
+function DoorIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+      <path d="M6 21V4.5A1.5 1.5 0 0 1 7.5 3h9A1.5 1.5 0 0 1 18 4.5V21M3 21h18" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx="14.5" cy="12.5" r="1.3" fill="currentColor" />
+    </svg>
+  );
+}
+
+/** Accès d'un fichier rangés par ligne puis par PK (dans l'ordre du terrain), les autres par nom. */
+function sortAcces(items: Acces[]): Acces[] {
+  return [...items].sort(
+    (x, y) =>
+      Number(!x.code) - Number(!y.code) ||
+      (x.code ?? '').localeCompare(y.code ?? '') ||
+      (x.pk ?? Infinity) - (y.pk ?? Infinity) ||
+      x.name.localeCompare(y.name, 'fr', { numeric: true }),
+  );
+}
+
+const accesLine = (a: Acces) => (a.code ? `Ligne ${fmtLine(a.code)}` : 'Pas rattaché à une ligne');
+
+function AccesRow({ a, sub, onPick }: { a: Acces; sub: string; onPick: (at: LonLat) => void }) {
+  return (
+    <li>
+      <button className="acces-row" onClick={() => onPick(a.lonlat)}>
+        <span className="acces-ico">
+          <DoorIcon />
+        </span>
+        <span className="acces-main">
+          <b>{a.name || 'Accès sans nom'}</b>
+          <small>{sub}</small>
+        </span>
+        {a.pk !== undefined && <span className="acces-pk">PK {fmtPk(a.pk)}</span>}
+      </button>
+    </li>
+  );
+}
+
+/** Bouton « Accès » : afficher ou cacher mes accès, les retrouver dans une liste, en importer, en supprimer. */
+export function AccesSheet(p: {
+  sets: AccesSet[];
+  shown: boolean;
+  onToggleShown: () => void;
+  status: ImportStatus | null;
+  onImport: (src: File | string) => void;
+  onDeleteSet: (id: string) => void;
+  onShowSet: (set: AccesSet) => void;
+  onPick: (at: LonLat) => void;
+  onClose: () => void;
+}) {
+  const [q, setQ] = useState('');
+  const total = p.sets.reduce((n, s) => n + s.items.length, 0);
+  const found = q.trim().length >= 2 ? searchAcces(q, p.sets, 500) : null;
+  return (
+    <Modal title="Mes accès" onClose={p.onClose}>
+      <label className="toggle">
+        <span>
+          Afficher mes accès sur la carte
+          <small>Points verts avec leur nom</small>
+        </span>
+        <input type="checkbox" checked={p.shown} onChange={p.onToggleShown} />
+      </label>
+      {total > 0 && (
+        <>
+          <input
+            className="acces-search"
+            type="search"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder={`Chercher parmi tes ${total} accès`}
+            aria-label="Chercher un accès par son nom, son détail ou son fichier"
+            enterKeyHint="search"
+          />
+          {found ? (
+            found.hits.length ? (
+              <ul className="acces-list">
+                {found.hits.map(({ set, a }, i) => (
+                  <AccesRow key={i} a={a} sub={`${accesLine(a)} · ${set.name}`} onPick={p.onPick} />
+                ))}
+              </ul>
+            ) : (
+              <p className="muted">Aucun accès ne correspond à « {q.trim()} ».</p>
+            )
+          ) : (
+            p.sets.map((set) => (
+              <section key={set.id} className="acces-file">
+                <div className="acces-file-head">
+                  <span>
+                    <b>{set.name}</b>
+                    <small>
+                      {set.items.length} accès · {set.items.filter((a) => a.code).length} rattachés à une ligne
+                    </small>
+                  </span>
+                  <button className="btn btn-small" onClick={() => p.onShowSet(set)} disabled={!set.items.length}>
+                    Carte
+                  </button>
+                  <button
+                    className="btn btn-small btn-ghost"
+                    onClick={() => {
+                      if (window.confirm(`Supprimer « ${set.name} » de ce téléphone ?`)) p.onDeleteSet(set.id);
+                    }}
+                  >
+                    Supprimer
+                  </button>
+                </div>
+                <ul className="acces-list">
+                  {sortAcces(set.items).map((a, i) => (
+                    <AccesRow key={i} a={a} sub={accesLine(a)} onPick={p.onPick} />
+                  ))}
+                </ul>
+              </section>
+            ))
+          )}
+        </>
+      )}
+      {PREVIEW ? (
+        <p className="muted small">L’import d’accès n’est pas disponible dans cet aperçu.</p>
+      ) : (
+        <AccesImport status={p.status} onImport={p.onImport} first={total === 0} />
+      )}
+    </Modal>
   );
 }
 
@@ -103,12 +198,8 @@ export function FilterSheet(p: {
   basemap: Basemap;
   onToggle: (k: FilterKey) => void;
   onBasemap: (b: Basemap) => void;
-  acces: AccesSet[];
-  importStatus: ImportStatus | null;
-  onImport: (src: File | string) => void;
-  onDeleteSet: (id: string) => void;
-  onShowSet: (set: AccesSet) => void;
-  onListSet: (set: AccesSet) => void;
+  /** Ouvre « Mes accès » (liste, import, suppression). */
+  onOpenAcces: () => void;
   onClose: () => void;
 }) {
   const groups = [...new Set(FILTERS.map((f) => f.group))];
@@ -146,7 +237,9 @@ export function FilterSheet(p: {
         Les signaux viennent d’OpenStreetMap : couverture partielle selon les secteurs, et pas toujours à jour.
       </p>
       {!PREVIEW && (
-        <AccesManager sets={p.acces} status={p.importStatus} onImport={p.onImport} onDelete={p.onDeleteSet} onShow={p.onShowSet} onList={p.onListSet} />
+        <button className="btn wide" onClick={p.onOpenAcces}>
+          Mes accès : liste, import et suppression
+        </button>
       )}
     </Modal>
   );

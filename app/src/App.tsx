@@ -7,7 +7,7 @@ import { Banner } from './components/Banner';
 import { AroundCard, ErrorCard, HintCard, NextCard } from './components/Cards';
 import { Icon } from './components/parts';
 import { SearchScreen } from './components/SearchScreen';
-import { Disclaimer, FeatureCard, FilterSheet, InfoSheet, MenuSheet, type ImportStatus } from './components/Sheets';
+import { AccesSheet, Disclaimer, FeatureCard, FilterSheet, InfoSheet, MenuSheet, type ImportStatus } from './components/Sheets';
 import type { LocateState, Theme } from './components/state';
 import { TargetSheet, type Origin, type TargetState } from './components/TargetSheet';
 import { InstallBanner } from './components/Install';
@@ -27,7 +27,7 @@ import { MapView, railSource, type FocusRequest } from './map/MapView';
 import { PREVIEW } from './lib/env';
 import type { Basemap } from './map/style';
 
-type Panel = 'none' | 'filters' | 'info' | 'menu' | 'search' | 'autour';
+type Panel = 'none' | 'filters' | 'info' | 'menu' | 'search' | 'autour' | 'acces';
 
 const darkQuery = () => (typeof window.matchMedia === 'function' ? window.matchMedia('(prefers-color-scheme: dark)') : null);
 
@@ -42,8 +42,6 @@ export default function App() {
   const [ack, setAck] = useState(() => loadPref('pkr-ack-v1', false));
   const [panel, setPanel] = useState<Panel>('none');
   const [autourTab, setAutourTab] = useState<AutourTab>('autour');
-  /** Recherche pré-remplie à l'ouverture (« Liste » d'un fichier d'accès). */
-  const [searchInit, setSearchInit] = useState('');
   const [loc, setLoc] = useState<LocateState>({ phase: 'idle' });
   const [typeFiltre, setTypeFiltre] = useState(() => loadPref<string>('pkr-type-filtre', 'tout'));
   const [following, setFollowing] = useState(false);
@@ -347,11 +345,6 @@ export default function App() {
     focusOn(at, 17);
   };
 
-  const openSearch = (query = '') => {
-    setSearchInit(query);
-    setPanel('search');
-  };
-
   const openAutour = (tab: AutourTab) => {
     setAutourTab(tab);
     setPanel('autour');
@@ -443,6 +436,10 @@ export default function App() {
             <Icon name="layers" />
             <span>Couches</span>
           </button>
+          <button className="tool-btn" onClick={() => setPanel('acces')} aria-label="Mes accès : afficher, chercher, importer">
+            <Icon name="door" />
+            <span>Accès</span>
+          </button>
         </div>
       </div>
 
@@ -452,7 +449,7 @@ export default function App() {
           following={following}
           acquiring={loc.phase === 'acquiring'}
           mapFree={mapFree}
-          onSearch={() => openSearch()}
+          onSearch={() => setPanel('search')}
           onFollow={startFollowing}
           onLocate={locate}
           onRecenter={recenter}
@@ -465,7 +462,6 @@ export default function App() {
           manifest={manifest}
           currentLine={chosenCode}
           acces={acces}
-          initialQuery={searchInit}
           onGo={(at, zoom) => showOnMap(at, zoom)}
           onPk={(code, pk) => void goToPk(code, pk)}
           onAcces={openAcces}
@@ -500,12 +496,20 @@ export default function App() {
           basemap={basemap}
           onToggle={toggleFilter}
           onBasemap={setBasemap}
-          acces={acces}
-          importStatus={importStatus}
+          onOpenAcces={() => setPanel('acces')}
+          onClose={() => setPanel('none')}
+        />
+      )}
+      {panel === 'acces' && (
+        <AccesSheet
+          sets={acces}
+          shown={filters.acces}
+          onToggleShown={() => toggleFilter('acces')}
+          status={importStatus}
           onImport={(src) => void importAcces(src)}
           onDeleteSet={deleteSet}
           onShowSet={showSet}
-          onListSet={(set) => openSearch(set.name)}
+          onPick={openAcces}
           onClose={() => setPanel('none')}
         />
       )}
