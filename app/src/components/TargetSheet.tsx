@@ -3,6 +3,7 @@ import type { LineDoc } from '../lib/data';
 import { fmtDist, fmtLine, fmtPk } from '../lib/format';
 import { distance, type LonLat } from '../lib/geo';
 import { kindVisible, KIND_BADGE, type Filters } from '../lib/layers';
+import { itemDetail, uniqueItems } from '../lib/lineinfo';
 import { aroundPk } from '../lib/nearby';
 import { signalImage, SIGNAL_ICONS } from '../lib/signaux';
 import { navLinks, type PkPosition } from '../lib/pk';
@@ -62,7 +63,7 @@ export function TargetSheet(p: {
     .sort((a, b) => a.d - b.d)
     .slice(0, 5);
   const around = aroundPk(t.doc, t.pk, (k) => k !== 'acces' && kindVisible(p.filters, k), 5, 3);
-  const nearby = [...around.inside, ...around.behind, ...around.ahead].sort((a, b) => a.dist - b.dist).slice(0, 5);
+  const nearby = uniqueItems([...around.inside, ...around.behind, ...around.ahead]).sort((a, b) => a.dist - b.dist).slice(0, 5);
   const destIsPk = t.dest.lonlat === pos.lonlat;
 
   return (
@@ -173,7 +174,7 @@ export function TargetSheet(p: {
                       )}
                       <span className="item-main">
                         <b>{it.label}</b>
-                        {it.detail && <small>{it.detail}</small>}
+                        {it.detail && <small>{itemDetail(it.kind, it.detail)}</small>}
                       </span>
                       <span className="item-side">
                         <b>{it.dist < 1 ? 'Ici' : `${it.pk >= t.pk ? '↑' : '↓'} ${fmtDist(it.dist)}`}</b>

@@ -1,15 +1,14 @@
 import { PREVIEW } from '../lib/env';
-import { useEffect, useMemo, useState } from 'react';
 import type { Point } from 'geojson';
 import type { MapGeoJSONFeature } from 'maplibre-gl';
-import { loadGares, type GareEntry, type Manifest } from '../lib/data';
+import type { Manifest } from '../lib/data';
 import type { AccesSet } from '../lib/acces';
-import { fmtLine, fmtPk } from '../lib/format';
-import { parsePk, parsePkQuery } from '../lib/pk';
+import { fmtLine } from '../lib/format';
 import { NavLinks } from './TargetSheet';
-import { bestIndexes, normName } from '../lib/search';
 import { RFN_CREDIT, RFN_URL, signalImage, SIGNAL_ICONS } from '../lib/signaux';
-import { InstallSteps } from './Install';
+import { InstallSteps, useInstallMode } from './Install';
+import { Icon } from './parts';
+import type { Theme } from './state';
 import { MyMapsLink } from './MyMapsLink';
 import { installMode } from '../lib/install';
 import type { LonLat } from '../lib/geo';
@@ -385,160 +384,54 @@ export function FeatureCard(p: {
   );
 }
 
-/* ---------- Recherche ---------- */
+/* ---------- Menu « … » ---------- */
 
-const norm = (s: string) =>
-  s
-    .normalize('NFD')
-    .replace(/[̀-ͯ]/g, '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, ' ')
-    .trim();
+const THEMES: [Theme, string][] = [
+  ['auto', 'Auto'],
+  ['jour', 'Jour'],
+  ['nuit', 'Nuit'],
+];
 
-interface SearchResult {
-  label: string;
-  sub: string;
-  at?: LonLat;
-  zoom?: number;
-  pk?: { code: string; pk: number };
-}
-
-const RECENTS_KEY = 'pkr-recherches';
-function loadRecents(): SearchResult[] {
-  try {
-    const v = JSON.parse(localStorage.getItem(RECENTS_KEY) ?? '[]');
-    return Array.isArray(v) ? v.slice(0, 6) : [];
-  } catch {
-    return [];
-  }
-}
-function saveRecents(list: SearchResult[]) {
-  try {
-    localStorage.setItem(RECENTS_KEY, JSON.stringify(list));
-  } catch {
-    /* stockage plein ou bloqué */
-  }
-}
-
-export function Search(p: {
-  manifest: Manifest | null;
-  /** Ligne où l'on se trouve (ou celle du chantier) : un PK tapé seul s'y rapporte. */
-  currentLine: string | null;
-  onGo: (at: LonLat, zoom: number) => void;
-  onPk: (code: string, pk: number) => void;
+export function MenuSheet(p: {
+  theme: Theme;
+  onTheme: (t: Theme) => void;
+  /** Une position est affichée : on peut l'effacer. */
+  located: boolean;
+  onClear: () => void;
+  onInfo: () => void;
+  onClose: () => void;
 }) {
-  const [q, setQ] = useState('');
-  const [gares, setGares] = useState<GareEntry[] | null>(null);
-  const [open, setOpen] = useState(false);
-  const [recents, setRecents] = useState<SearchResult[]>(() => loadRecents());
-  // Noms de gares préparés une fois (accents, « Saint » → « St ») pour chercher vite à chaque lettre.
-  const garesNorm = useMemo(() => (gares ?? []).map((g) => normName(g[0])), [gares]);
-
-  useEffect(() => {
-    if (open && !gares) loadGares().then(setGares).catch(() => setGares([]));
-  }, [open, gares]);
-
-  const nq = norm(q);
-  const results: SearchResult[] = [];
-  const pkq = parsePkQuery(q);
-  if (pkq && p.manifest?.lines[pkq.code]) {
-    results.push({
-      label: `PK ${fmtPk(pkq.pk)} · ligne ${fmtLine(pkq.code)}`,
-      sub: p.manifest.lines[pkq.code].n ?? 'Aller à ce PK',
-      pk: pkq,
-    });
-  }
-  // PK tapé seul (« 45+200 », « 45,2 », « PK 45 ») : sur la ligne où l'on est.
-  const pkAlone = !pkq && /^\s*(pk\s*)?-?\d{1,4}(\s*[+,.]\s*\d{1,3})?\s*$/i.test(q) && (/[+,.]|pk/i.test(q) || q.trim().length <= 3);
-  const alonePk = pkAlone ? parsePk(q) : null;
-  if (alonePk !== null) {
-    if (p.currentLine && p.manifest?.lines[p.currentLine]) {
-      results.push({
-        label: `PK ${fmtPk(alonePk)} · ligne ${fmtLine(p.currentLine)}`,
-        sub: `${p.manifest.lines[p.currentLine].n ?? ''} (ta ligne)`,
-        pk: { code: p.currentLine, pk: alonePk },
-      });
-    } else {
-      results.push({ label: `PK ${fmtPk(alonePk)} : sur quelle ligne ?`, sub: 'Repère-toi d’abord, ou tape la ligne puis le PK : 830000 45+200' });
-    }
-  }
-  if (nq.length >= 2 && !pkq && !(alonePk !== null && /[+,.]|pk/i.test(q))) {
-    const digits = nq.replace(/\s/g, '');
-    if (/^\d{3,6}$/.test(digits) && p.manifest) {
-      for (const [code, info] of Object.entries(p.manifest.lines)) {
-        if (code.startsWith(digits) && results.length < 4) {
-          const g = gares?.find((x) => x[3] === code);
-          if (g) results.push({ label: `Ligne ${fmtLine(code)}`, sub: info.n ?? '', at: [g[1], g[2]], zoom: 11 });
-        }
-      }
-    }
-    // Gares : début du nom ou d'un mot d'abord, puis noms approchants (fautes de frappe tolérées).
-    for (const i of bestIndexes(q, garesNorm, Math.max(0, 8 - results.length))) {
-      const g = gares![i];
-      results.push({ label: g[0], sub: `Gare · ligne ${fmtLine(g[3])}`, at: [g[1], g[2]], zoom: 15 });
-    }
-  }
-
-  const choose = (r: SearchResult) => {
-    if (r.pk) p.onPk(r.pk.code, r.pk.pk);
-    else if (r.at) p.onGo(r.at, r.zoom ?? 15);
-    else return;
-    const next = [r, ...recents.filter((x) => x.label !== r.label || x.sub !== r.sub)].slice(0, 6);
-    setRecents(next);
-    saveRecents(next);
-    setQ('');
-    setOpen(false);
-    (document.activeElement as HTMLElement | null)?.blur();
-  };
-  const showRecents = open && !q.trim() && recents.length > 0;
-
+  const mode = useInstallMode();
   return (
-    <div className="search">
-      <input
-        value={q}
-        onChange={(e) => setQ(e.target.value)}
-        onFocus={() => setOpen(true)}
-        placeholder="Gare, ligne, PK…"
-        aria-label="Rechercher une gare ou une ligne"
-        enterKeyHint="search"
-      />
-      {showRecents && (
-        <ul className="results">
-          <li className="results-head">
-            <span>Récents</span>
-            <button
-              className="link-btn"
-              onMouseDown={(e) => e.preventDefault()}
-              onClick={() => {
-                setRecents([]);
-                saveRecents([]);
-              }}
-            >
-              Effacer
-            </button>
-          </li>
-          {recents.map((r, i) => (
-            <li key={`r-${i}`}>
-              <button onClick={() => choose(r)}>
-                <b>{r.label}</b>
-                <small>{r.sub}</small>
-              </button>
-            </li>
-          ))}
-        </ul>
+    <Modal title="Menu" onClose={p.onClose}>
+      <div className="field-label">Affichage</div>
+      <div className="seg seg-3" role="radiogroup" aria-label="Affichage">
+        {THEMES.map(([v, l]) => (
+          <button key={v} role="radio" aria-checked={p.theme === v} className={`seg-btn ${p.theme === v ? 'on' : ''}`} onClick={() => p.onTheme(v)}>
+            {l}
+          </button>
+        ))}
+      </div>
+      <p className="muted small">
+        Nuit : appli et carte sombres, pour travailler de nuit sans être ébloui. Auto suit le mode sombre du téléphone.
+      </p>
+      {p.located && (
+        <button className="menu-row" onClick={p.onClear}>
+          <Icon name="close" size={22} />
+          <span>Effacer ma position</span>
+        </button>
       )}
-      {open && results.length > 0 && (
-        <ul className="results">
-          {results.map((r, i) => (
-            <li key={i}>
-              <button disabled={!r.pk && !r.at} onClick={() => choose(r)}>
-                <b>{r.label}</b>
-                <small>{r.sub}</small>
-              </button>
-            </li>
-          ))}
-        </ul>
+      <button className="menu-row" onClick={p.onInfo}>
+        <Icon name="info" size={22} />
+        <span>À propos, sources et version</span>
+        <Icon name="right" size={20} />
+      </button>
+      {mode !== 'installed' && (
+        <>
+          <div className="field-label">Installer sur l’écran d’accueil</div>
+          <InstallSteps mode={mode} />
+        </>
       )}
-    </div>
+    </Modal>
   );
 }

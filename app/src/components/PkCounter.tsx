@@ -5,7 +5,7 @@ import { fmtPk } from '../lib/format';
  * Compteur PK au mètre : entre deux positions GPS, il défile en douceur
  * de l'ancienne valeur à la nouvelle (sans jamais annoncer un PK pas encore atteint).
  */
-export function PkCounter({ value }: { value: number }) {
+export function PkCounter({ value, className }: { value: number; className?: string }) {
   const [shown, setShown] = useState(value);
   const shownRef = useRef(value);
   const rendered = useRef(value);
@@ -37,5 +37,5 @@ export function PkCounter({ value }: { value: number }) {
     raf = requestAnimationFrame(step);
     return () => cancelAnimationFrame(raf);
   }, [value]);
-  return <div className="pk pk-live">PK {fmtPk(shown)}</div>;
+  return <span className={className}>{fmtPk(shown)}</span>;
 }

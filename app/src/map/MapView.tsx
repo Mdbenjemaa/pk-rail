@@ -36,6 +36,8 @@ export interface FocusRequest {
 
 interface Props {
   basemap: Basemap;
+  /** Mode nuit : fond et couleurs sombres. */
+  night: boolean;
   filters: Filters;
   me: FeatureCollection | null;
   target: FeatureCollection | null;
@@ -50,22 +52,29 @@ interface Props {
   onMapTap: () => void;
 }
 
-/** Marges de la zone visible : le panneau du bas (téléphone) ou de gauche (ordinateur) cache une partie de la carte. */
+/**
+ * Marges de la zone de carte vraiment visible : le bandeau du PK en haut, la fiche et la barre d'actions
+ * en bas (téléphone), ou la colonne de gauche (ordinateur).
+ */
 function viewPadding(m: MapLibreMap) {
   const el = m.getContainer();
-  const wide = el.clientWidth >= 900;
-  // Ordinateur : panneau de repérage à gauche, pages de l'espace chantier à droite.
-  const pageOpen = !!document.querySelector('.app.page-open');
-  return wide
-    ? { top: 70, bottom: 20, left: 460, right: pageOpen ? 500 : 20 }
-    : { top: 70, bottom: Math.round(el.clientHeight * 0.45), left: 0, right: 0 };
+  const box = el.getBoundingClientRect();
+  if (el.clientWidth >= 900) return { top: 20, bottom: 20, left: 460, right: 20 };
+  const banner = document.querySelector('.top-zone .banner')?.getBoundingClientRect();
+  const bottom = document.querySelector('.bottom-zone')?.getBoundingClientRect();
+  return {
+    top: Math.max(60, Math.round((banner ? banner.bottom : box.top) - box.top + 16)),
+    bottom: Math.max(20, Math.round(box.bottom - (bottom ? bottom.top : box.bottom) + 16)),
+    left: 0,
+    right: 0,
+  };
 }
 
-export function MapView({ basemap, filters, me, target, acces, focus, keepInView, onUserMove, onFeature, onLongPress, onMapTap }: Props) {
+export function MapView({ basemap, night, filters, me, target, acces, focus, keepInView, onUserMove, onFeature, onLongPress, onMapTap }: Props) {
   const container = useRef<HTMLDivElement>(null);
   const map = useRef<MapLibreMap | null>(null);
-  const latest = useRef({ filters, me, target, acces, onFeature, onLongPress, onMapTap, onUserMove });
-  latest.current = { filters, me, target, acces, onFeature, onLongPress, onMapTap, onUserMove };
+  const latest = useRef({ night, filters, me, target, acces, onFeature, onLongPress, onMapTap, onUserMove });
+  latest.current = { night, filters, me, target, acces, onFeature, onLongPress, onMapTap, onUserMove };
   const overlays = (): Overlays => ({ me: latest.current.me, target: latest.current.target, acces: latest.current.acces });
   const syncOverlays = (m: MapLibreMap) => {
     const o = overlays();
@@ -79,7 +88,7 @@ export function MapView({ basemap, filters, me, target, acces, focus, keepInView
     let cancelled = false;
     let m: MapLibreMap | null = null;
     (async () => {
-      const style = await buildStyle(basemap, latest.current.filters, overlays());
+      const style = await buildStyle(basemap, latest.current.filters, overlays(), latest.current.night);
       if (cancelled || !container.current) return;
       const created = new MapLibreMap({
         container: container.current,
@@ -95,7 +104,15 @@ export function MapView({ basemap, filters, me, target, acces, focus, keepInView
       created.addControl(new ScaleControl({ unit: 'metric' }), 'bottom-left');
       map.current = created;
       // Le style a été préparé avant la création : on y remet les points arrivés entre-temps.
-      created.once('load', () => syncOverlays(created));
+      created.once('load', () => {
+        syncOverlays(created);
+        // Les crédits s'ouvrent au démarrage : on les replie vite (bouton « i ») pour libérer la carte.
+        setTimeout(() => {
+          const attrib = container.current?.querySelector('.maplibregl-ctrl-attrib');
+          attrib?.classList.remove('maplibregl-compact-show');
+          attrib?.removeAttribute('open');
+        }, 3000);
+      });
 
       created.on('click', (e) => {
         const { x, y } = e.point;
@@ -144,7 +161,7 @@ export function MapView({ basemap, filters, me, target, acces, focus, keepInView
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Changement de fond de carte.
+  // Changement de fond de carte, ou passage jour / nuit.
   const firstBasemap = useRef(true);
   useEffect(() => {
     if (firstBasemap.current) {
@@ -152,7 +169,7 @@ export function MapView({ basemap, filters, me, target, acces, focus, keepInView
       return;
     }
     let cancelled = false;
-    buildStyle(basemap, latest.current.filters, overlays()).then((style) => {
+    buildStyle(basemap, latest.current.filters, overlays(), night).then((style) => {
       const m = map.current;
       if (cancelled || !m) return;
       m.setStyle(style);
@@ -161,7 +178,8 @@ export function MapView({ basemap, filters, me, target, acces, focus, keepInView
     return () => {
       cancelled = true;
     };
-  }, [basemap]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [basemap, night]);
 
   // Filtres → visibilité des couches.
   useEffect(() => {
@@ -186,7 +204,7 @@ export function MapView({ basemap, filters, me, target, acces, focus, keepInView
   // Recentrage demandé.
   useEffect(() => {
     if (!focus) return;
-    // Le panneau du bas couvre près de la moitié de l'écran : on décale le centre vers le haut.
+    // Le bandeau et la fiche du bas cachent une partie de la carte : on centre dans la zone libre.
     const go = () =>
       map.current?.flyTo({
         center: focus.center,

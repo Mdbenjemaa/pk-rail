@@ -1,8 +1,14 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { FeatureCollection } from 'geojson';
 import type { MapGeoJSONFeature } from 'maplibre-gl';
-import { LocatePanel, type LocateState } from './components/LocatePanel';
-import { Disclaimer, FeatureCard, FilterSheet, InfoSheet, Search, type ImportStatus } from './components/Sheets';
+import { ActionBar } from './components/ActionBar';
+import { AutourScreen, type AutourTab } from './components/AutourScreen';
+import { Banner } from './components/Banner';
+import { AroundCard, ErrorCard, HintCard, NextCard } from './components/Cards';
+import { Icon } from './components/parts';
+import { SearchScreen } from './components/SearchScreen';
+import { Disclaimer, FeatureCard, FilterSheet, InfoSheet, MenuSheet, type ImportStatus } from './components/Sheets';
+import type { LocateState, Theme } from './components/state';
 import { TargetSheet, type Origin, type TargetState } from './components/TargetSheet';
 import { InstallBanner } from './components/Install';
 import { accesFeatures, loadAcces, readAccesSource, saveAcces, snapAcces, type AccesSet } from './lib/acces';
@@ -11,6 +17,7 @@ import { parsePk, pkRange, positionsAtPk } from './lib/pk';
 import { dataUpdate, loadCell, loadLine, loadManifest, type Manifest } from './lib/data';
 import type { LonLat } from './lib/geo';
 import { acquire, follow, geoErrorMessage, type Acquisition, type Fix } from './lib/gps';
+import { accesOnLine, aroundHere } from './lib/lineinfo';
 import { PkFilter, type PkEstimate } from './lib/pkfilter';
 import { keepScreenOn, type AwakeStatus } from './lib/wakelock';
 import { DEFAULT_FILTERS, type FilterKey, type Filters } from './lib/layers';
@@ -20,7 +27,9 @@ import { MapView, railSource, type FocusRequest } from './map/MapView';
 import { PREVIEW } from './lib/env';
 import type { Basemap } from './map/style';
 
-type Panel = 'none' | 'filters' | 'info';
+type Panel = 'none' | 'filters' | 'info' | 'menu' | 'search' | 'autour';
+
+const darkQuery = () => (typeof window.matchMedia === 'function' ? window.matchMedia('(prefers-color-scheme: dark)') : null);
 
 /** PK Rail : se repérer sur le réseau (ligne et PK), suivre le PK en direct, aller à un PK, voir ses accès. */
 export default function App() {
@@ -28,13 +37,17 @@ export default function App() {
   const [dataError, setDataError] = useState<string | null>(null);
   const [filters, setFilters] = useState<Filters>(() => ({ ...DEFAULT_FILTERS, ...loadPref<Partial<Filters>>('pkr-filters', {}) }));
   const [basemap, setBasemap] = useState<Basemap>(() => loadPref<Basemap>('pkr-basemap', 'plan'));
+  const [theme, setTheme] = useState<Theme>(() => loadPref<Theme>('pkr-theme', 'auto'));
+  const [systemDark, setSystemDark] = useState(() => darkQuery()?.matches ?? false);
   const [ack, setAck] = useState(() => loadPref('pkr-ack-v1', false));
   const [panel, setPanel] = useState<Panel>('none');
+  const [autourTab, setAutourTab] = useState<AutourTab>('autour');
   const [loc, setLoc] = useState<LocateState>({ phase: 'idle' });
-  const [expanded, setExpanded] = useState(false);
   const [typeFiltre, setTypeFiltre] = useState(() => loadPref<string>('pkr-type-filtre', 'tout'));
   const [following, setFollowing] = useState(false);
   const [followPk, setFollowPk] = useState<PkEstimate | null>(null);
+  /** Dernier sens de marche connu (on le garde pendant les arrêts). */
+  const [followDir, setFollowDir] = useState<1 | -1 | 0>(0);
   const [followAt, setFollowAt] = useState<LonLat | null>(null);
   const [mapFree, setMapFree] = useState(false);
   const [awake, setAwake] = useState<AwakeStatus | null>(null);
@@ -48,6 +61,7 @@ export default function App() {
   const [importStatus, setImportStatus] = useState<ImportStatus | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const bottomZone = useRef<HTMLDivElement>(null);
 
   const acquisition = useRef<Acquisition | null>(null);
   const stopFollow = useRef<(() => void) | null>(null);
@@ -72,6 +86,29 @@ export default function App() {
   }, []);
   useEffect(() => savePref('pkr-filters', filters), [filters]);
   useEffect(() => savePref('pkr-basemap', basemap), [basemap]);
+  useEffect(() => savePref('pkr-theme', theme), [theme]);
+
+  // Mode nuit : choisi dans le menu, ou en « Auto » selon le mode sombre du téléphone.
+  useEffect(() => {
+    const mq = darkQuery();
+    if (!mq) return;
+    const onChange = () => setSystemDark(mq.matches);
+    mq.addEventListener('change', onChange);
+    return () => mq.removeEventListener('change', onChange);
+  }, []);
+  const night = theme === 'nuit' || (theme === 'auto' && systemDark);
+  useEffect(() => {
+    document.documentElement.classList.toggle('night', night);
+  }, [night]);
+
+  // Hauteur du bas de l'écran (fiche + barre) : pour placer l'échelle de la carte et le bandeau d'installation au-dessus.
+  useEffect(() => {
+    const el = bottomZone.current;
+    if (!el || typeof ResizeObserver === 'undefined') return;
+    const ro = new ResizeObserver(() => document.documentElement.style.setProperty('--bz', `${el.offsetHeight}px`));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
 
   const focusOn = useCallback((center: LonLat, zoom?: number) => setFocus((f) => ({ center, zoom, seq: (f?.seq ?? 0) + 1 })), []);
 
@@ -98,15 +135,20 @@ export default function App() {
     [manifest, focusOn],
   );
 
+  const showToast = (text: string) => {
+    if (toastTimer.current) clearTimeout(toastTimer.current);
+    setToast(text);
+    toastTimer.current = setTimeout(() => setToast(null), 6000);
+  };
+
+  const gpsBlocked = () =>
+    showToast('Le GPS est bloqué dans cet aperçu. Cherche une gare, puis appuie longuement sur la carte à côté des voies : l’appli calcule le PK de ce point.');
+
   const locate = () => {
-    if (PREVIEW) {
-      setLoc({ phase: 'error', message: 'Le GPS est bloqué dans cet aperçu. Cherche une gare ou zoome sur une ligne, puis appuie longuement sur la carte à côté des voies : l’appli calcule le PK de ce point.' });
-      return;
-    }
+    if (PREVIEW) return gpsBlocked();
     stopFollowing();
     setPicked(null);
     setTarget(null);
-    setExpanded(false);
     setLoc({ phase: 'acquiring', fix: null, elapsed: 0 });
     const acq = acquire((fix, elapsed) => {
       setLoc({ phase: 'acquiring', fix, elapsed });
@@ -133,6 +175,7 @@ export default function App() {
     followLine.current = null;
     setFollowing(false);
     setFollowPk(null);
+    setFollowDir(0);
     setFollowAt(null);
     setMapFree(false);
     setAwake(null);
@@ -143,10 +186,12 @@ export default function App() {
    * puis affiché au mètre. La carte reste libre ; elle ne bouge que si le point va sortir de l'écran.
    */
   const startFollowing = () => {
-    if (!('geolocation' in navigator)) return;
+    if (PREVIEW) return gpsBlocked();
+    if (!('geolocation' in navigator)) return showToast('Ce téléphone ne donne pas accès au GPS.');
+    acquisition.current?.cancel();
     stopFollowing();
     setFollowing(true);
-    setExpanded(false);
+    setPicked(null);
     pkFilter.current.reset();
     followLine.current = loc.phase === 'result' ? (loc.chosen?.code ?? null) : null;
     if (lastFix.current) focusOn(lastFix.current.fix.lonlat);
@@ -162,7 +207,9 @@ export default function App() {
           const chosen = await analyseRef.current(fix, 'suivi', lastFix.current?.forced, false, followLine.current);
           if (!stopFollow.current) break;
           followLine.current = chosen?.code ?? null;
-          setFollowPk(chosen ? pkFilter.current.update(chosen.code, chosen.pk, fix.accuracy, fix.time) : null);
+          const est = chosen ? pkFilter.current.update(chosen.code, chosen.pk, fix.accuracy, fix.time) : null;
+          setFollowPk(est);
+          if (est && est.dir !== 0) setFollowDir(est.dir);
           setFollowAt(fix.lonlat);
         }
       } finally {
@@ -183,8 +230,6 @@ export default function App() {
       },
     );
   };
-
-  const toggleFollow = () => (following ? stopFollowing() : startFollowing());
 
   const recenter = () => {
     setMapFree(false);
@@ -209,10 +254,11 @@ export default function App() {
 
   const toggleFilter = (k: FilterKey) => setFilters((f) => ({ ...f, [k]: !f[k] }));
 
-  const showToast = (text: string) => {
-    if (toastTimer.current) clearTimeout(toastTimer.current);
-    setToast(text);
-    toastTimer.current = setTimeout(() => setToast(null), 6000);
+  /** Va voir un élément sur la carte (pendant le suivi, la carte devient libre jusqu'à « Recentrer »). */
+  const showOnMap = (at: LonLat, zoom = 17) => {
+    setPanel('none');
+    if (following) setMapFree(true);
+    focusOn(at, zoom);
   };
 
   /** « Aller au PK » : position du PK sur la ligne, distance depuis ma position, accès proches. */
@@ -227,6 +273,7 @@ export default function App() {
         return showToast(`Le PK ${fmtPk(pk)} n’est pas sur la ligne ${fmtLine(code)} (PK ${fmtPk(lo)} à ${fmtPk(hi)}).`);
       }
       setPicked(null);
+      setPanel('none');
       setTargetExpanded(false);
       setTarget({ code, pk, doc, positions, idx: 0, dest: { name: `PK ${fmtPk(pk)}`, lonlat: positions[0].lonlat } });
       focusOn(positions[0].lonlat, 15);
@@ -235,8 +282,14 @@ export default function App() {
     }
   };
 
-  const origin: Origin | null =
-    loc.phase === 'result' && loc.chosen ? { code: loc.chosen.code, pk: loc.chosen.pk, lonlat: loc.fix.lonlat } : null;
+  const res = loc.phase === 'result' ? loc : null;
+  const chosen = res?.chosen ?? null;
+  const chosenCode = chosen?.code ?? null;
+  const herePk = chosen ? (following && followPk ? followPk.pk : chosen.pk) : null;
+  const accesHere = useMemo(() => (chosenCode ? accesOnLine(acces, chosenCode) : []), [acces, chosenCode]);
+  const around = res?.doc && herePk !== null ? aroundHere(res.doc, herePk, filters, typeFiltre, accesHere) : null;
+
+  const origin: Origin | null = res && chosen ? { code: chosen.code, pk: chosen.pk, lonlat: res.fix.lonlat } : null;
 
   const targetFC = useMemo<FeatureCollection | null>(() => {
     if (!target) return null;
@@ -282,11 +335,56 @@ export default function App() {
     focusOn([lon, lat], 11);
   };
 
+  const openAutour = (tab: AutourTab) => {
+    setAutourTab(tab);
+    setPanel('autour');
+  };
+
+  // Le bandeau du haut, et la fiche du bas selon la situation.
+  const bannerShown = following || loc.phase === 'acquiring' || loc.phase === 'result';
+  const bannerHasMenu = bannerShown && !following;
+  let card: ReactNode = null;
+  if (picked && loc.phase !== 'acquiring') {
+    card = <FeatureCard feature={picked.f} at={picked.at} manifest={manifest} onPlaceHere={placeHere} onClose={() => setPicked(null)} />;
+  } else if (target) {
+    card = (
+      <TargetSheet
+        target={target}
+        origin={origin}
+        acces={acces}
+        filters={filters}
+        expanded={targetExpanded}
+        onToggleExpand={() => setTargetExpanded((e) => !e)}
+        onPosition={(idx) => setTarget((t) => t && { ...t, idx, dest: { name: `PK ${fmtPk(t.pk)}`, lonlat: t.positions[idx].lonlat } })}
+        onDest={(dest) => setTarget((t) => t && { ...t, dest })}
+        onFocus={(at) => focusOn(at, 16)}
+        onClose={() => setTarget(null)}
+      />
+    );
+  } else if (loc.phase === 'error') {
+    card = <ErrorCard message={loc.message} onClose={closeLocate} />;
+  } else if (around && following) {
+    card = <NextCard around={around} dir={followDir} onFocus={(at) => showOnMap(at)} onAll={() => openAutour('autour')} />;
+  } else if (around) {
+    card = <AroundCard around={around} onFocus={(at) => showOnMap(at)} onAll={() => openAutour('autour')} />;
+  } else if (loc.phase === 'idle' && !following) {
+    card = (
+      <HintCard
+        text={
+          PREVIEW
+            ? 'Aperçu sans GPS : appui long sur la carte, près des voies = me placer ici.'
+            : 'Appuie sur « Me repérer » pour voir ta ligne et ton PK, ou fais un appui long sur la carte près des voies.'
+        }
+      />
+    );
+  }
+
   return (
     <div className="app">
       <MapView
         key={mapKey}
         basemap={basemap}
+        night={night}
         filters={filters}
         me={me}
         target={targetFC}
@@ -301,83 +399,81 @@ export default function App() {
         onMapTap={() => setPicked(null)}
       />
 
-      <header className="topbar">
-        <Search
-          manifest={manifest}
-          currentLine={(loc.phase === 'result' && loc.chosen?.code) || null}
-          onGo={focusOn}
-          onPk={(code, pk) => void goToPk(code, pk)}
-        />
-        <button className="icon-btn raised" onClick={() => setPanel('filters')} aria-label="Couches et fond de carte">
-          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
-            <path d="M12 3 2 8l10 5 10-5-10-5Zm-8.4 9L2 13l10 5 10-5-1.6-1-8.4 4.2L3.6 12Zm0 4L2 17l10 5 10-5-1.6-1-8.4 4.2L3.6 16Z" fill="currentColor" />
-          </svg>
-        </button>
-        <button className="icon-btn raised" onClick={() => setPanel('info')} aria-label="À propos et sources">
-          <b>i</b>
-        </button>
-      </header>
-
-      {dataError && <div className="toast error">Données indisponibles : {dataError}</div>}
-      {toast && (
-        <div className="toast" role="status" onClick={() => setToast(null)}>
-          {toast}
-        </div>
-      )}
-
-      <div className="fab-zone">
-        {PREVIEW && loc.phase === 'idle' && !picked && <div className="hint">Aperçu sans GPS : appui long sur la carte = me placer ici</div>}
-        <button className="fab" onClick={locate} disabled={loc.phase === 'acquiring'}>
-          {loc.phase === 'acquiring' ? 'GPS…' : 'Me repérer'}
-        </button>
-      </div>
-
-      {picked && loc.phase !== 'acquiring' && (
-        <FeatureCard feature={picked.f} at={picked.at} manifest={manifest} onPlaceHere={placeHere} onClose={() => setPicked(null)} />
-      )}
-
-      {target ? (
-        <TargetSheet
-          target={target}
-          origin={origin}
-          acces={acces}
-          filters={filters}
-          expanded={targetExpanded}
-          onToggleExpand={() => setTargetExpanded((e) => !e)}
-          onPosition={(idx) =>
-            setTarget((t) => t && { ...t, idx, dest: { name: `PK ${fmtPk(t.pk)}`, lonlat: t.positions[idx].lonlat } })
-          }
-          onDest={(dest) => setTarget((t) => t && { ...t, dest })}
-          onFocus={(at) => focusOn(at, 16)}
-          onClose={() => setTarget(null)}
-        />
-      ) : (
-        <LocatePanel
+      <div className={`top-zone ${bannerShown ? 'has-banner' : ''}`}>
+        <Banner
           state={loc}
           manifest={manifest}
-          filters={filters}
-          expanded={expanded}
           following={following}
           followPk={followPk}
           awake={awake}
+          onMenu={() => setPanel('menu')}
+          onDetails={() => openAutour('ligne')}
+          onUseFix={() => acquisition.current?.cancel()}
+        />
+        {dataError && <div className="toast error">Données indisponibles : {dataError}</div>}
+        {toast && (
+          <div className="toast" role="status" onClick={() => setToast(null)}>
+            {toast}
+          </div>
+        )}
+        <div className="map-tools">
+          {!bannerHasMenu && (
+            <button className="tool-btn round" onClick={() => setPanel('menu')} aria-label="Menu : affichage jour ou nuit, installer, à propos">
+              <Icon name="dots" size={22} />
+            </button>
+          )}
+          <button className="tool-btn" onClick={() => setPanel('filters')} aria-label="Couches et fond de carte">
+            <Icon name="layers" />
+            <span>Couches</span>
+          </button>
+        </div>
+      </div>
+
+      <div className="bottom-zone" ref={bottomZone}>
+        {card}
+        <ActionBar
+          following={following}
+          acquiring={loc.phase === 'acquiring'}
           mapFree={mapFree}
-          onToggleFollow={PREVIEW ? undefined : toggleFollow}
+          onSearch={() => setPanel('search')}
+          onFollow={startFollowing}
+          onLocate={locate}
           onRecenter={recenter}
-          onToggleExpand={() => setExpanded((e) => !e)}
-          onChoose={(code) => lastFix.current && void analyse(lastFix.current.fix, lastFix.current.mode, code, false)}
-          onGoPk={(code, text) => void goToPk(code, text)}
+          onStop={stopFollowing}
+        />
+      </div>
+
+      {panel === 'search' && (
+        <SearchScreen
+          manifest={manifest}
+          currentLine={chosenCode}
+          onGo={(at, zoom) => showOnMap(at, zoom)}
+          onPk={(code, pk) => void goToPk(code, pk)}
+          onClose={() => setPanel('none')}
+        />
+      )}
+      {panel === 'autour' && res && herePk !== null && (
+        <AutourScreen
+          state={res}
+          pk={herePk}
+          manifest={manifest}
+          filters={filters}
           acces={acces}
           typeFiltre={typeFiltre}
           onTypeFiltre={(k) => {
             setTypeFiltre(k);
             savePref('pkr-type-filtre', k);
           }}
-          onFocus={(at) => focusOn(at, 17)}
-          onStopAcquire={() => acquisition.current?.cancel()}
-          onClose={closeLocate}
+          tab={autourTab}
+          onTab={setAutourTab}
+          onFocus={(at) => showOnMap(at)}
+          onChoose={(code) => {
+            if (lastFix.current) void analyse(lastFix.current.fix, lastFix.current.mode, code, false);
+          }}
+          onGoPk={(code, text) => void goToPk(code, text)}
+          onClose={() => setPanel('none')}
         />
       )}
-
       {panel === 'filters' && (
         <FilterSheet
           filters={filters}
@@ -392,8 +488,21 @@ export default function App() {
           onClose={() => setPanel('none')}
         />
       )}
+      {panel === 'menu' && (
+        <MenuSheet
+          theme={theme}
+          onTheme={setTheme}
+          located={loc.phase === 'result'}
+          onClear={() => {
+            closeLocate();
+            setPanel('none');
+          }}
+          onInfo={() => setPanel('info')}
+          onClose={() => setPanel('none')}
+        />
+      )}
       {panel === 'info' && <InfoSheet manifest={manifest} onClose={() => setPanel('none')} />}
-      {ack && !PREVIEW && panel === 'none' && <InstallBanner />}
+      {ack && !PREVIEW && panel === 'none' && !following && <InstallBanner />}
       {!ack && (
         <Disclaimer
           onAccept={() => {
