@@ -15,7 +15,7 @@ import type { FeatureCollection } from 'geojson';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { PMTiles, Protocol } from 'pmtiles';
 import { ChunkedSource, DATA_URL, PMTILES_URL, RailTilesSource } from '../lib/data';
-import { angleDiff, subscribeHeading } from '../lib/heading';
+import { angleDiff, setMapBearing, subscribeHeading } from '../lib/heading';
 import { PREVIEW } from '../lib/env';
 import type { LonLat } from '../lib/geo';
 import { FILTERS, type Filters } from '../lib/layers';
@@ -73,6 +73,10 @@ interface Props {
   onUserMove?: () => void;
   /** La carte tourne dans la direction du téléphone (sinon nord en haut). */
   orient?: boolean;
+  /** Change à chaque demande de « nord en haut » (bouton boussole après une rotation à deux doigts). */
+  northSeq?: number;
+  /** L'utilisateur a tourné la carte avec deux doigts. */
+  onUserRotate?: () => void;
   onFeature: (f: MapGeoJSONFeature, at: LonLat) => void;
   onLongPress: (at: LonLat) => void;
   onMapTap: () => void;
@@ -131,13 +135,18 @@ function goTo(m: MapLibreMap, f: FocusRequest, animate: boolean) {
   else m.jumpTo({ center: f.center, zoom, padding });
 }
 
-export function MapView({ basemap, night, filters, me, target, acces, signal = null, focus, keepInView, onUserMove, onFeature, onLongPress, onMapTap, orient = false }: Props) {
+export function MapView({
+  basemap, night, filters, me, target, acces, signal = null, focus, keepInView, onUserMove, onFeature, onLongPress, onMapTap,
+  orient = false, northSeq = 0, onUserRotate,
+}: Props) {
   const container = useRef<HTMLDivElement>(null);
   const map = useRef<MapLibreMap | null>(null);
-  const latest = useRef({ night, filters, me, target, acces, signal, focus, onFeature, onLongPress, onMapTap, onUserMove, orient });
-  latest.current = { night, filters, me, target, acces, signal, focus, onFeature, onLongPress, onMapTap, onUserMove, orient };
+  const latest = useRef({ night, filters, me, target, acces, signal, focus, onFeature, onLongPress, onMapTap, onUserMove, orient, onUserRotate });
+  latest.current = { night, filters, me, target, acces, signal, focus, onFeature, onLongPress, onMapTap, onUserMove, orient, onUserRotate };
   const heading = useRef<number | null>(null);
   const waitingMove = useRef(false);
+  /** Mode « direction » quitté par une rotation à deux doigts : la carte reste comme l'agent l'a mise. */
+  const keepBearing = useRef(false);
 
   /** Faisceau tourné selon la direction du téléphone ; carte tournée aussi si demandé. */
   const applyHeading = (m: MapLibreMap | null) => {
@@ -197,7 +206,14 @@ export function MapView({ basemap, night, filters, me, target, acces, signal = n
       m = created;
       // Tests automatiques (navigateur piloté) : accès à la carte pour viser un point précis.
       if (navigator.webdriver) (window as Window & { __pkrMap?: MapLibreMap }).__pkrMap = created;
-      created.touchZoomRotate.disableRotation();
+      // Rotation à deux doigts permise (le bouton boussole remet le nord en haut). Pas au clic droit :
+      // sur ordinateur, il sert à « me placer ici ».
+      created.on('rotate', () => setMapBearing(created.getBearing()));
+      created.on('rotatestart', (e: { originalEvent?: Event }) => {
+        if (!e.originalEvent) return;
+        if (latest.current.orient) keepBearing.current = true;
+        latest.current.onUserRotate?.();
+      });
       created.addControl(new ScaleControl({ unit: 'metric' }), 'bottom-left');
       map.current = created;
       // Le style a été préparé avant la création : on y remet les points arrivés entre-temps.
@@ -339,11 +355,18 @@ export function MapView({ basemap, night, filters, me, target, acces, signal = n
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
   );
+  // Bouton boussole après une rotation à deux doigts : nord en haut.
+  useEffect(() => {
+    if (northSeq && map.current) map.current.rotateTo(0, { duration: 400 });
+  }, [northSeq]);
   // Bouton boussole : la carte suit la direction, ou revient le nord en haut.
   useEffect(() => {
     const m = map.current;
     if (!m) return;
-    if (orient) applyHeading(m);
+    if (orient) {
+      keepBearing.current = false;
+      applyHeading(m);
+    } else if (keepBearing.current) keepBearing.current = false;
     else if (Math.abs(m.getBearing()) > 0.5) m.rotateTo(0, { duration: 400 });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orient]);

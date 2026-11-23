@@ -66,6 +66,7 @@ export default function App() {
   const [mapFree, setMapFree] = useState(false);
   /** Carte tournée dans la direction du téléphone (bouton boussole). */
   const [orient, setOrient] = useState(false);
+  const [northSeq, setNorthSeq] = useState(0);
   /** Mes signalements (gardés sur le téléphone) et celui ouvert. */
   const [signals, setSignals] = useState<Signalement[]>([]);
   const [openSignal, setOpenSignal] = useState<Signalement | null>(null);
@@ -218,7 +219,8 @@ export default function App() {
   const showToast = (text: string) => {
     if (toastTimer.current) clearTimeout(toastTimer.current);
     setToast(text);
-    toastTimer.current = setTimeout(() => setToast(null), 6000);
+    // Le temps de lire : 6 s, plus pour les longues explications (jusqu'à 14 s). Un toucher la ferme.
+    toastTimer.current = setTimeout(() => setToast(null), Math.min(14000, Math.max(6000, text.length * 60)));
   };
 
   const gpsBlocked = () =>
@@ -607,6 +609,8 @@ export default function App() {
         focus={focus}
         keepInView={following && !mapFree ? followAt : null}
         orient={orient && !!me}
+        northSeq={northSeq}
+        onUserRotate={() => setOrient(false)}
         signal={signalFC}
         onUserMove={() => {
           if (stopFollow.current) setMapFree(true);
@@ -641,7 +645,11 @@ export default function App() {
           </div>
         )}
         <div className="tools-row">
-          {me ? <OrientButton orient={orient} onToggle={setOrient} /> : <span />}
+          {me ? (
+            <OrientButton orient={orient} onToggle={setOrient} onResetNorth={() => setNorthSeq((n) => n + 1)} onMessage={showToast} />
+          ) : (
+            <span />
+          )}
         <div className="map-tools">
           {!bannerHasMenu && (
             <button className="tool-btn round" onClick={() => setPanel('menu')} aria-label="Menu : affichage jour ou nuit, installer, à propos">

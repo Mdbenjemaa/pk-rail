@@ -342,3 +342,92 @@ test('signaler : type, gravité, commentaire, photo, envoi et liste de mes signa
   await expect(page.getByRole('dialog', { name: 'Menu' }).getByRole('button', { name: 'Mes signalements', exact: true })).toBeVisible();
 });
 
+test('boussole façon iPhone : autorisation, cap de la boussole, et retour au nord après une rotation', async ({ page }) => {
+  // iPhone : autorisation demandée au toucher, cap donné par webkitCompassHeading dans « deviceorientation ».
+  await page.addInitScript(() => {
+    (DeviceOrientationEvent as unknown as { requestPermission: () => Promise<string> }).requestPermission = () => Promise.resolve('granted');
+    Object.defineProperty(window, 'ondeviceorientationabsolute', { value: undefined, configurable: true });
+    delete (window as unknown as Record<string, unknown>).ondeviceorientationabsolute;
+  });
+  await openApp(page);
+  await locate(page);
+  await page.evaluate(() => {
+    setInterval(() => {
+      const e = new Event('deviceorientation');
+      Object.defineProperty(e, 'webkitCompassHeading', { value: 135 });
+      Object.defineProperty(e, 'alpha', { value: 12 });
+      Object.defineProperty(e, 'absolute', { value: false });
+      window.dispatchEvent(e);
+    }, 150);
+  });
+  const map = () => (window as unknown as { __pkrMap: import('maplibre-gl').Map }).__pkrMap;
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __pkrMap: import('maplibre-gl').Map }).__pkrMap.getLayoutProperty('me-beam', 'visibility'))).toBe('visible');
+  expect(await page.evaluate(() => (window as unknown as { __pkrMap: import('maplibre-gl').Map }).__pkrMap.getLayoutProperty('me-beam', 'icon-rotate'))).toBe(135);
+  void map;
+
+  // Carte tournée à la main : le bouton remet le nord en haut.
+  await page.evaluate(() => (window as unknown as { __pkrMap: import('maplibre-gl').Map }).__pkrMap.setBearing(40));
+  await page.getByRole('button', { name: 'Remettre le nord en haut' }).click();
+  await expect
+    .poll(() => page.evaluate(() => Math.abs((window as unknown as { __pkrMap: import('maplibre-gl').Map }).__pkrMap.getBearing())))
+    .toBeLessThan(1);
+  await expect(page.getByRole('button', { name: 'Tourner la carte dans ma direction' })).toBeVisible();
+});
+
+test('boussole refusée : un message dit quoi faire', async ({ page }) => {
+  await page.addInitScript(() => {
+    (DeviceOrientationEvent as unknown as { requestPermission: () => Promise<string> }).requestPermission = () => Promise.resolve('denied');
+  });
+  await openApp(page);
+  await locate(page);
+  await page.getByRole('button', { name: 'Tourner la carte dans ma direction' }).click();
+  await expect(page.locator('.toast')).toContainText(/Autoriser|Capteurs de mouvement/, { timeout: 8000 });
+  expect(await page.evaluate(() => (window as unknown as { __pkrMap: import('maplibre-gl').Map }).__pkrMap.getLayoutProperty('me-beam', 'visibility'))).toBe('none');
+});
+
+
+test('deux doigts : la carte tourne, garde son angle, et le bouton remet le nord en haut', async ({ page }) => {
+  await openApp(page);
+  await page.context().grantPermissions(['geolocation', 'accelerometer', 'gyroscope', 'magnetometer']);
+  await locate(page);
+  const bearing = async () =>
+    (((await page.evaluate(() => (window as unknown as { __pkrMap: import('maplibre-gl').Map }).__pkrMap.getBearing())) % 360) + 360) % 360;
+  const apart = (a: number, b: number) => Math.abs(((b - a + 540) % 360) - 180);
+  // Vrai geste tactile : deux doigts posés de part et d'autre du centre de la carte, qui tournent.
+  const cdp = await page.context().newCDPSession(page);
+  const twoFingerTurn = async (deg: number) => {
+    const { cx, cy } = await page.evaluate(() => {
+      const r = document.querySelector('.maplibregl-canvas')!.getBoundingClientRect();
+      return { cx: r.left + r.width / 2, cy: r.top + r.height * 0.4 };
+    });
+    const at = (a: number) => [
+      { x: cx + 90 * Math.cos(a), y: cy + 90 * Math.sin(a), id: 1 },
+      { x: cx - 90 * Math.cos(a), y: cy - 90 * Math.sin(a), id: 2 },
+    ];
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: at(0) });
+    for (let i = 1; i <= 15; i++) {
+      await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: at((((deg * Math.PI) / 180) * i) / 15) });
+      await page.waitForTimeout(20);
+    }
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  };
+
+  // Nord en haut : la carte tourne sous les doigts, le bouton la remet droite.
+  await twoFingerTurn(60);
+  await expect.poll(async () => apart(await bearing(), 0)).toBeGreaterThan(20);
+  await page.getByRole('button', { name: 'Remettre le nord en haut' }).click();
+  await expect.poll(async () => apart(await bearing(), 0)).toBeLessThan(1);
+
+  // Carte qui suit le téléphone (ouest) : deux doigts la reprennent, sans retour brutal au nord.
+  await page.evaluate(() => {
+    setInterval(() => window.dispatchEvent(new DeviceOrientationEvent('deviceorientationabsolute', { alpha: 90, absolute: true })), 150);
+  });
+  await page.getByRole('button', { name: 'Tourner la carte dans ma direction' }).click();
+  await expect.poll(async () => apart(await bearing(), 270)).toBeLessThan(4);
+  await twoFingerTurn(-60);
+  await expect(page.getByRole('button', { name: 'Remettre le nord en haut' })).toHaveAttribute('aria-pressed', 'false');
+  await page.waitForTimeout(1000);
+  const after = await bearing();
+  expect(apart(after, 0)).toBeGreaterThan(20);
+  expect(apart(after, 270)).toBeGreaterThan(20);
+});

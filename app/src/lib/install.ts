@@ -45,6 +45,12 @@ export type InstallMode =
   | 'android-menu' // Android sans fenêtre d'installation : menu du navigateur
   | 'desktop-menu'; // ordinateur sans fenêtre d'installation
 
+/** iPhone ou iPad (y compris l'appli installée sur l'écran d'accueil). */
+export function isIOS(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  return /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+}
+
 export function installMode(): InstallMode {
   if (isInstalled()) return 'installed';
   if (deferred) return 'prompt';

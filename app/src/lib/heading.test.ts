@@ -35,3 +35,15 @@ describe('direction du téléphone', () => {
     expect(currentHeading(now)).toBeNull();
   });
 });
+
+describe('boussole : messages et iPhone', () => {
+  it('ignore un cap iPhone pas encore étalonné (-1)', () => {
+    expect(compassFromEvent({ alpha: 10, webkitCompassHeading: -1 })).toBeNull();
+  });
+  it('explique un refus différemment sur iPhone et sur Android', async () => {
+    const { compassMessage } = await import('./heading');
+    expect(compassMessage('denied', true)).toContain('Autoriser');
+    expect(compassMessage('denied', false)).toContain('Capteurs de mouvement');
+    expect(compassMessage('unsupported', false)).toContain('deux doigts');
+  });
+});
