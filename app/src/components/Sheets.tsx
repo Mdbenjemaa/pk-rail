@@ -107,6 +107,68 @@ function AccesRow({ a, sub, onPick }: { a: Acces; sub: string; onPick: (at: LonL
   );
 }
 
+/** Un fichier importé, en menu déroulant (fermé au départ) : ses accès, puis « Voir sur la carte » et « Supprimer ». */
+function AccesFile(p: {
+  set: AccesSet;
+  onToggle: (id: string) => void;
+  onShowSet: (set: AccesSet) => void;
+  onDeleteSet: (id: string) => void;
+  onPick: (at: LonLat) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const { set } = p;
+  return (
+    <section className={`acces-file ${open ? 'open' : ''} ${set.hidden ? 'off' : ''}`}>
+      <div className="acces-file-top">
+      <button className="acces-file-head" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
+        <span className="acces-file-ico">
+          <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+            <path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2zM9 4v14M15 6v14" fill="none" stroke="currentColor" strokeWidth="2" strokeLinejoin="round" />
+          </svg>
+        </span>
+        <span className="acces-file-name">
+          <b>{set.name}</b>
+          <small>
+            {set.hidden
+              ? `Désactivée · ${set.items.length} accès cachés`
+              : `${set.items.length} accès · ${set.items.filter((a) => a.code).length} rattachés à une ligne`}
+          </small>
+        </span>
+        <svg className="acces-chev" viewBox="0 0 24 24" width="24" height="24" aria-hidden="true">
+          <path d="M6 9l6 6 6-6" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+      <label className="acces-switch" title={set.hidden ? 'Activer cette liste' : 'Désactiver cette liste'}>
+        <input type="checkbox" checked={!set.hidden} onChange={() => p.onToggle(set.id)} aria-label={`Liste « ${set.name} » activée`} />
+        <span className="switch-ui" aria-hidden="true" />
+      </label>
+      </div>
+      {open && (
+        <div className="acces-file-body">
+          <ul className="acces-list">
+            {sortAcces(set.items).map((a, i) => (
+              <AccesRow key={i} a={a} sub={accesLine(a)} onPick={p.onPick} />
+            ))}
+          </ul>
+          <div className="acces-file-actions">
+            <button className="btn btn-small" onClick={() => p.onShowSet(set)} disabled={!set.items.length}>
+              Voir tout sur la carte
+            </button>
+            <button
+              className="btn btn-small btn-ghost"
+              onClick={() => {
+                if (window.confirm(`Supprimer « ${set.name} » de ce téléphone ?`)) p.onDeleteSet(set.id);
+              }}
+            >
+              Supprimer le fichier
+            </button>
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
 /** Bouton « Accès » : afficher ou cacher mes accès, les retrouver dans une liste, en importer, en supprimer. */
 export function AccesSheet(p: {
   sets: AccesSet[];
@@ -116,6 +178,8 @@ export function AccesSheet(p: {
   onImport: (src: File | string) => void;
   onDeleteSet: (id: string) => void;
   onShowSet: (set: AccesSet) => void;
+  /** Active ou désactive une liste (un fichier importé). */
+  onToggleSet: (id: string) => void;
   onPick: (at: LonLat) => void;
   onClose: () => void;
 }) {
@@ -127,7 +191,7 @@ export function AccesSheet(p: {
       <label className="toggle">
         <span>
           Afficher mes accès sur la carte
-          <small>Points verts avec leur nom</small>
+          <small>Points verts avec leur nom. Chaque liste s’active ou se désactive avec son bouton.</small>
         </span>
         <input type="checkbox" checked={p.shown} onChange={p.onToggleShown} />
       </label>
@@ -153,34 +217,7 @@ export function AccesSheet(p: {
               <p className="muted">Aucun accès ne correspond à « {q.trim()} ».</p>
             )
           ) : (
-            p.sets.map((set) => (
-              <section key={set.id} className="acces-file">
-                <div className="acces-file-head">
-                  <span>
-                    <b>{set.name}</b>
-                    <small>
-                      {set.items.length} accès · {set.items.filter((a) => a.code).length} rattachés à une ligne
-                    </small>
-                  </span>
-                  <button className="btn btn-small" onClick={() => p.onShowSet(set)} disabled={!set.items.length}>
-                    Carte
-                  </button>
-                  <button
-                    className="btn btn-small btn-ghost"
-                    onClick={() => {
-                      if (window.confirm(`Supprimer « ${set.name} » de ce téléphone ?`)) p.onDeleteSet(set.id);
-                    }}
-                  >
-                    Supprimer
-                  </button>
-                </div>
-                <ul className="acces-list">
-                  {sortAcces(set.items).map((a, i) => (
-                    <AccesRow key={i} a={a} sub={accesLine(a)} onPick={p.onPick} />
-                  ))}
-                </ul>
-              </section>
-            ))
+            p.sets.map((set) => <AccesFile key={set.id} set={set} onToggle={p.onToggleSet} onShowSet={p.onShowSet} onDeleteSet={p.onDeleteSet} onPick={p.onPick} />)
           )}
         </>
       )}

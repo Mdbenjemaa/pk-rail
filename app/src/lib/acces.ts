@@ -29,6 +29,8 @@ export interface AccesSet {
   name: string;
   imported: number;
   items: Acces[];
+  /** Liste désactivée : cachée sur la carte, dans les recherches et dans les listes autour du PK. */
+  hidden?: boolean;
 }
 
 const KEY = 'pkr-acces-v1';
@@ -215,7 +217,8 @@ export function accesFeature(a: Acces, setName: string): Feature<Point> {
 }
 
 export function accesFeatures(sets: AccesSet[]): FeatureCollection {
-  return { type: 'FeatureCollection', features: sets.flatMap((s) => s.items.map((a) => accesFeature(a, s.name))) };
+  const shown = sets.filter((s) => !s.hidden);
+  return { type: 'FeatureCollection', features: shown.flatMap((s) => s.items.map((a) => accesFeature(a, s.name))) };
 }
 
 /** Un accès et le fichier importé dont il vient. */

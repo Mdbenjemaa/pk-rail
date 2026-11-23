@@ -286,7 +286,9 @@ export default function App() {
   const chosen = res?.chosen ?? null;
   const chosenCode = chosen?.code ?? null;
   const herePk = chosen ? (following && followPk ? followPk.pk : chosen.pk) : null;
-  const accesHere = useMemo(() => (chosenCode ? accesOnLine(acces, chosenCode) : []), [acces, chosenCode]);
+  /** Listes d'accès activées : les seules affichées sur la carte, dans les recherches et autour du PK. */
+  const accesOn = useMemo(() => acces.filter((s) => !s.hidden), [acces]);
+  const accesHere = useMemo(() => (chosenCode ? accesOnLine(accesOn, chosenCode) : []), [accesOn, chosenCode]);
   const around = res?.doc && herePk !== null ? aroundHere(res.doc, herePk, filters, typeFiltre, accesHere) : null;
 
   const origin: Origin | null = res && chosen ? { code: chosen.code, pk: chosen.pk, lonlat: res.fix.lonlat } : null;
@@ -327,6 +329,13 @@ export default function App() {
     setImportStatus(null);
   };
 
+  /** Active ou désactive une liste d'accès (gardé sur le téléphone). */
+  const toggleSet = (id: string) => {
+    const next = acces.map((s) => (s.id === id ? { ...s, hidden: !s.hidden } : s));
+    saveAcces(next);
+    setAcces(next);
+  };
+
   const showSet = (set: AccesSet) => {
     if (!set.items.length) return;
     const lon = set.items.reduce((a, x) => a + x.lonlat[0], 0) / set.items.length;
@@ -338,6 +347,8 @@ export default function App() {
   /** Un de mes accès trouvé dans la recherche : on le montre sur la carte avec sa fiche. */
   const openAcces = (at: LonLat) => {
     const hit = findAccesAt(acces, at);
+    // Accès d'une liste désactivée (vu dans « Mes accès ») : on réactive sa liste pour qu'il apparaisse.
+    if (hit?.set.hidden) toggleSet(hit.set.id);
     setPanel('none');
     setFilters((f) => (f.acces ? f : { ...f, acces: true }));
     if (hit) setPicked({ f: { ...accesFeature(hit.a, hit.set.name), layer: { id: 'u-acces' } } as unknown as MapGeoJSONFeature, at });
@@ -361,7 +372,7 @@ export default function App() {
       <TargetSheet
         target={target}
         origin={origin}
-        acces={acces}
+        acces={accesOn}
         filters={filters}
         expanded={targetExpanded}
         onToggleExpand={() => setTargetExpanded((e) => !e)}
@@ -461,7 +472,7 @@ export default function App() {
         <SearchScreen
           manifest={manifest}
           currentLine={chosenCode}
-          acces={acces}
+          acces={accesOn}
           onGo={(at, zoom) => showOnMap(at, zoom)}
           onPk={(code, pk) => void goToPk(code, pk)}
           onAcces={openAcces}
@@ -474,7 +485,7 @@ export default function App() {
           pk={herePk}
           manifest={manifest}
           filters={filters}
-          acces={acces}
+          acces={accesOn}
           typeFiltre={typeFiltre}
           onTypeFiltre={(k) => {
             setTypeFiltre(k);
@@ -509,6 +520,7 @@ export default function App() {
           onImport={(src) => void importAcces(src)}
           onDeleteSet={deleteSet}
           onShowSet={showSet}
+          onToggleSet={toggleSet}
           onPick={openAcces}
           onClose={() => setPanel('none')}
         />

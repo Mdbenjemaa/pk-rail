@@ -385,13 +385,19 @@ button:disabled { cursor: default; }
 
 /* Mes accès : liste par fichier, rangée par ligne et PK */
 .acces-search { width: 100%; height: 48px; margin: 12px 0 2px; padding: 0 14px; border: 1.5px solid var(--line); border-radius: 14px; background: var(--field, var(--bg)); color: var(--ink); font-size: 16px; }
-.acces-file { margin-top: 14px; }
-.acces-file-head { display: flex; align-items: center; gap: 8px; padding: 4px 0 8px; }
-.acces-file-head > span { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-.acces-file-head b { overflow-wrap: anywhere; }
-.acces-file-head small { color: var(--muted); font-size: 12.5px; }
+.acces-file { margin-top: 10px; border: 1px solid var(--line); border-radius: 16px; overflow: hidden; background: var(--bg); }
+.acces-file-head { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 64px; padding: 10px 12px; border: 0; background: none; color: inherit; text-align: left; }
+.acces-file-ico { width: 38px; height: 38px; flex: none; display: grid; place-items: center; border-radius: 10px; background: var(--surface-2, #f1f5f9); color: var(--ink); }
+.acces-file-name { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.acces-file-name b { font-size: 16px; overflow-wrap: anywhere; }
+.acces-file-name small { color: var(--muted); font-size: 12.5px; }
+.acces-chev { flex: none; color: var(--muted); transition: transform 0.2s; }
+.acces-file.open .acces-chev { transform: rotate(180deg); }
+.acces-file-body { border-top: 1px solid var(--line); }
+.acces-file .acces-list { margin: 0; border: 0; border-radius: 0; }
+.acces-file-actions { display: flex; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--line); }
+.acces-file-actions .btn { flex: 1; }
 .acces-list { list-style: none; margin: 8px 0 0; padding: 0; border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
-.acces-file .acces-list { margin-top: 0; }
 .acces-row { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 58px; padding: 8px 12px; border: 0; border-top: 1px solid var(--line); background: none; color: inherit; text-align: left; }
 .acces-list li:first-child .acces-row { border-top: 0; }
 .acces-ico { width: 38px; height: 38px; flex: none; display: grid; place-items: center; border-radius: 10px; background: #d1fae5; color: #047857; }
@@ -400,3 +406,14 @@ button:disabled { cursor: default; }
 .acces-main small { color: var(--muted); font-size: 12.5px; }
 .acces-pk { font-size: 15px; font-weight: 800; font-variant-numeric: tabular-nums; white-space: nowrap; }
 :root.night .acces-ico { background: #064e3b; color: #6ee7b7; }
+/* Listes d'accès : interrupteur activer / désactiver */
+.acces-file-top { display: flex; align-items: center; }
+.acces-file-top .acces-file-head { flex: 1; min-width: 0; padding-right: 4px; }
+.acces-switch { position: relative; flex: none; display: grid; place-items: center; width: 70px; min-height: 64px; border-left: 1px solid var(--line); cursor: pointer; }
+.acces-switch input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; }
+.switch-ui { position: relative; width: 50px; height: 30px; border-radius: 15px; background: #94a3b8; transition: background 0.2s; }
+.switch-ui::after { content: ''; position: absolute; top: 3px; left: 3px; width: 24px; height: 24px; border-radius: 12px; background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3); transition: transform 0.2s; }
+.acces-switch input:checked + .switch-ui { background: #047857; }
+.acces-switch input:checked + .switch-ui::after { transform: translateX(20px); }
+.acces-switch input:focus-visible + .switch-ui { outline: 3px solid #fb923c; outline-offset: 2px; }
+.acces-file.off .acces-file-ico, .acces-file.off .acces-file-name b { opacity: 0.5; }
