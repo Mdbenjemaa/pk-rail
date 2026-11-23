@@ -31,6 +31,8 @@ export class PkFilter {
   private p01 = 0;
   private p11 = 0;
   private t = 0;
+  /** Dernière mesure reçue (m), pour ignorer les positions répétées. */
+  private lastZ = NaN;
   private history: { t: number; x: number }[] = [];
 
   reset(): void {
@@ -42,6 +44,9 @@ export class PkFilter {
     const r = Math.max(accuracy, 2) ** 2 * 0.6;
     const dt = (timeMs - this.t) / 1000;
     if (this.code !== code || dt > MAX_GAP_S || dt < -1) return this.start(code, z, r, timeMs);
+    // Même position redonnée par le téléphone (même heure, même PK) : elle ne compte pas deux fois.
+    if (dt <= 0 && Math.abs(z - this.lastZ) < 0.01) return { pk: this.x / 1000, v: this.v, dir: this.direction(timeMs) };
+    this.lastZ = z;
     if (dt > 0) {
       // Prédiction
       this.x += this.v * dt;
@@ -74,10 +79,14 @@ export class PkFilter {
   private estimate(timeMs: number): PkEstimate {
     this.history.push({ t: timeMs, x: this.x });
     while (this.history.length > 1 && this.history[1].t <= timeMs - DIR_WINDOW_MS) this.history.shift();
+    return { pk: this.x / 1000, v: this.v, dir: this.direction(timeMs) };
+  }
+
+  private direction(timeMs: number): 1 | -1 | 0 {
     const old = this.history[0];
+    if (!old) return 0;
     const moved = this.x - old.x;
-    const dir = timeMs - old.t >= DIR_WINDOW_MS / 2 && Math.abs(moved) >= DIR_MIN_M ? (moved > 0 ? 1 : -1) : 0;
-    return { pk: this.x / 1000, v: this.v, dir };
+    return timeMs - old.t >= DIR_WINDOW_MS / 2 && Math.abs(moved) >= DIR_MIN_M ? (moved > 0 ? 1 : -1) : 0;
   }
 
   private start(code: string, z: number, r: number, timeMs: number): PkEstimate {
@@ -88,6 +97,7 @@ export class PkFilter {
     this.p01 = 0;
     this.p11 = 100;
     this.t = timeMs;
+    this.lastZ = z;
     this.history = [];
     return this.estimate(timeMs);
   }

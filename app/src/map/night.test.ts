@@ -47,3 +47,17 @@ describe('nightLayers', () => {
     expect(out[2].layout?.['text-field']).toBe('{name}');
   });
 });
+
+describe('noms du fond plan en français', () => {
+  it('remplace les noms anglais, garde les numéros de route', async () => {
+    const { frenchLabels } = await import('./night');
+    const out = frenchLabels([
+      { id: 'pays', type: 'symbol', source: 'o', layout: { 'text-field': ['coalesce', ['get', 'name_en'], ['get', 'name']] } },
+      { id: 'route', type: 'symbol', source: 'o', layout: { 'text-field': ['to-string', ['get', 'ref']] } },
+      { id: 'eau', type: 'fill', source: 'o' },
+    ] as never);
+    expect(JSON.stringify(out[0].layout)).toContain('name:fr');
+    expect(JSON.stringify(out[1].layout)).toContain('ref');
+    expect(out[2]).toEqual({ id: 'eau', type: 'fill', source: 'o' });
+  });
+});

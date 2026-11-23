@@ -21,6 +21,8 @@ interface SearchResult {
   at?: LonLat;
   zoom?: number;
   pk?: { code: string; pk: number };
+  /** Une ligne (par son numéro) : on la montre en entier. */
+  line?: string;
   /** Un de « mes accès » : on ouvre sa fiche. */
   acces?: boolean;
 }
@@ -45,14 +47,14 @@ function saveRecents(list: SearchResult[]) {
 function iconFor(r: SearchResult): IconName {
   if (r.acces) return 'door';
   if (r.pk) return 'pin';
-  if (r.label.startsWith('Ligne ')) return 'line';
+  if (r.line || r.label.startsWith('Ligne ')) return 'line';
   return 'train';
 }
 
 function ResultRow({ r, icon, onChoose }: { r: SearchResult; icon?: IconName; onChoose: (r: SearchResult) => void }) {
   return (
     <li>
-      <button className="result" disabled={!r.pk && !r.at} onClick={() => onChoose(r)}>
+      <button className="result" disabled={!r.pk && !r.at && !r.line} onClick={() => onChoose(r)}>
         <span className={`result-ico ${r.acces && !icon ? 'acces' : ''}`}>
           <Icon name={icon ?? iconFor(r)} size={22} />
         </span>
@@ -71,15 +73,15 @@ export function SearchScreen(p: {
   /** Ligne où l'on se trouve : un PK tapé seul s'y rapporte. */
   currentLine: string | null;
   acces: AccesSet[];
-  /** Recherche déjà tapée à l'ouverture (le nom d'un fichier d'accès, pour voir sa liste). */
-  initialQuery?: string;
   onGo: (at: LonLat, zoom: number) => void;
+  /** Montre une ligne en entier. */
+  onLine: (code: string) => void;
   onPk: (code: string, pk: number) => void;
   onAcces: (at: LonLat) => void;
   onClose: () => void;
 }) {
-  const [q, setQ] = useState(p.initialQuery ?? '');
-  const [allAcces, setAllAcces] = useState(!!p.initialQuery);
+  const [q, setQ] = useState('');
+  const [allAcces, setAllAcces] = useState(false);
   const [gares, setGares] = useState<GareEntry[] | null>(null);
   const [recents, setRecents] = useState<SearchResult[]>(() => loadRecents());
   // Noms de gares préparés une fois (accents, « Saint » → « St ») pour chercher vite à chaque lettre.
@@ -130,10 +132,10 @@ export function SearchScreen(p: {
   if (textQuery) {
     const digits = nq.replace(/\s/g, '');
     if (/^\d{3,6}$/.test(digits) && p.manifest) {
+      // Toutes les lignes, même sans gare (fret, raccordements) : la carte montre la ligne en entier.
       for (const [code, info] of Object.entries(p.manifest.lines)) {
         if (code.startsWith(digits) && placeResults.length < 3) {
-          const g = gares?.find((x) => x[3] === code);
-          if (g) placeResults.push({ label: `Ligne ${fmtLine(code)}`, sub: info.n ?? '', at: [g[1], g[2]], zoom: 11 });
+          placeResults.push({ label: `Ligne ${fmtLine(code)}`, sub: info.n ?? 'Ligne sans nom', line: code });
         }
       }
     }
@@ -148,6 +150,7 @@ export function SearchScreen(p: {
 
   const choose = (r: SearchResult) => {
     if (r.pk) p.onPk(r.pk.code, r.pk.pk);
+    else if (r.line) p.onLine(r.line);
     else if (r.acces && r.at) p.onAcces(r.at);
     else if (r.at) p.onGo(r.at, r.zoom ?? 15);
     else return;

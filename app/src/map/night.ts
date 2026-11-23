@@ -108,3 +108,17 @@ export function nightLayers(layers: LayerSpecification[]): LayerSpecification[] 
     return { ...layer, paint: next } as LayerSpecification;
   });
 }
+
+/**
+ * Noms du fond plan en français quand ils existent (« Belgique », « Suisse », « Genève »…),
+ * sinon le nom en lettres latines, sinon le nom local. Le fond OpenFreeMap affiche l'anglais par défaut.
+ */
+export function frenchLabels(layers: LayerSpecification[]): LayerSpecification[] {
+  const NAME = ['coalesce', ['get', 'name:fr'], ['get', 'name:latin'], ['get', 'name']];
+  return layers.map((l) => {
+    if (l.type !== 'symbol') return l;
+    const field = JSON.stringify(l.layout?.['text-field'] ?? null);
+    if (!/name_en|name:latin/.test(field)) return l;
+    return { ...l, layout: { ...l.layout, 'text-field': NAME } } as LayerSpecification;
+  });
+}

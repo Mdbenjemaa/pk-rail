@@ -19,6 +19,9 @@ export function localProjector(ref: LonLat) {
   const kx = 111320 * Math.cos(rad(ref[1]));
   const ky = 110574;
   return {
+    /** Mètres par degré de longitude et de latitude à cet endroit. */
+    kx,
+    ky,
     toXY: (p: LonLat): [number, number] => [(p[0] - ref[0]) * kx, (p[1] - ref[1]) * ky],
     toLonLat: (x: number, y: number): LonLat => [ref[0] + x / kx, ref[1] + y / ky],
   };

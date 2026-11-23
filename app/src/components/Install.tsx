@@ -92,7 +92,7 @@ export function InstallBanner() {
         <img src={`${import.meta.env.BASE_URL}icon-192.png`} alt="" width={44} height={44} />
         <div>
           <b>Installe PK Rail</b>
-          <small>Une icône sur ton écran d’accueil, l’appli en plein écran, et elle marche sans réseau.</small>
+          <small>Une icône sur ton écran d’accueil, l’appli en plein écran, et elle marche sans réseau là où tu es déjà passé.</small>
         </div>
         <button className="icon-btn" onClick={later} aria-label="Plus tard">×</button>
       </div>

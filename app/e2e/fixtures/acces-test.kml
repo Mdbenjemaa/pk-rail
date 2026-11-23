@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <name>Accès test Lieusaint</name>
+    <Placemark>
+      <name>Portail sud Lieusaint</name>
+      <description><![CDATA[Clé au poste<br>Parking derrière le quai <b>2</b>]]></description>
+      <Point><coordinates>2.56390,48.64125,0</coordinates></Point>
+    </Placemark>
+    <Placemark>
+      <name>Accès piste Moissy</name>
+      <ExtendedData><Data name="Code"><value>AC-12</value></Data></ExtendedData>
+      <Point><coordinates>2.56580,48.63700,0</coordinates></Point>
+    </Placemark>
+    <Placemark>
+      <name>Point en mer</name>
+      <Point><coordinates>-4.5,47.2,0</coordinates></Point>
+    </Placemark>
+  </Document>
+</kml>

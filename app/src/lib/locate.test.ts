@@ -87,6 +87,40 @@ describe('éléments autour du PK (données réelles)', () => {
   });
 });
 
+describe('voies proches (données réelles)', () => {
+  it('trouve les mêmes voies que la recherche complète, en écartant vite les voies lointaines', () => {
+    // Paris Gare de Lyon : la case la plus chargée de France.
+    const p: [number, number] = [2.373, 48.8443];
+    const cells = cellsFor(...p, 60);
+    const m = matchInCells(cells, p, 60);
+    // Recherche complète, sans tri préalable : toutes les voies nommées à moins de 60 m.
+    const brute = new Map<string, number>();
+    const R = 6371008.8;
+    const kx = (Math.PI / 180) * R * Math.cos((p[1] * Math.PI) / 180);
+    const ky = (Math.PI / 180) * R;
+    for (const c of cells) {
+      for (const [code, name, , runs] of c.v) {
+        if (!name) continue;
+        for (const run of runs) {
+          for (let i = 0; i + 3 < run.length; i += 2) {
+            const ax = (run[i] / 1e5 - p[0]) * kx;
+            const ay = (run[i + 1] / 1e5 - p[1]) * ky;
+            const bx = (run[i + 2] / 1e5 - p[0]) * kx;
+            const by = (run[i + 3] / 1e5 - p[1]) * ky;
+            const dx = bx - ax;
+            const dy = by - ay;
+            const t = Math.max(0, Math.min(1, dx || dy ? -(ax * dx + ay * dy) / (dx * dx + dy * dy) : 0));
+            const d = Math.hypot(ax + dx * t, ay + dy * t);
+            if (d <= 60) brute.set(`${code}|${name}`, Math.min(d, brute.get(`${code}|${name}`) ?? Infinity));
+          }
+        }
+      }
+    }
+    expect(brute.size).toBeGreaterThan(3);
+    expect(new Set(m.tracks.map((t) => `${t.code}|${t.name}`))).toEqual(new Set(brute.keys()));
+  });
+});
+
 describe('pickFollowLine', () => {
   const cand = (code: string, dist: number) => ({ code, rg: '', statut: '', dist, pk: 1, point: [0, 0] as [number, number], bearing: 0 });
   it('reste sur la ligne suivie quand une autre ligne passe un peu plus près', () => {

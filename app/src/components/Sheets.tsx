@@ -2,7 +2,7 @@ import { PREVIEW } from '../lib/env';
 import { useState } from 'react';
 import type { Point } from 'geojson';
 import type { MapGeoJSONFeature } from 'maplibre-gl';
-import type { Manifest } from '../lib/data';
+import { DATA_CACHE, TILES_CACHE, type Manifest } from '../lib/data';
 import type { Acces, AccesSet } from '../lib/acces';
 import { fmtLine, fmtPk } from '../lib/format';
 import { searchAcces } from '../lib/search';
@@ -303,9 +303,17 @@ export function InfoSheet(p: { manifest: Manifest | null; onClose: () => void })
       <button
         className="btn wide"
         onClick={async () => {
+          // Sans réseau, tout jeter laisserait le téléphone sans appli ni données : on refuse.
+          if (!navigator.onLine) {
+            window.alert('Pas de réseau : l’appli et les données gardées sur le téléphone sont conservées. Réessaie avec du réseau.');
+            return;
+          }
+          if (!window.confirm('Recharger l’appli et les données depuis le site ? Les zones gardées pour le hors-ligne seront retéléchargées au fil de l’usage.')) return;
           // Dépannage : on jette l'appli et les données gardées, puis on recharge depuis le site.
           try {
-            if ('caches' in globalThis) for (const k of await caches.keys()) if (k === 'pkr-data' || k.startsWith('workbox-precache')) await caches.delete(k);
+            if ('caches' in globalThis) {
+              for (const k of await caches.keys()) if (k === DATA_CACHE || k === TILES_CACHE || k.startsWith('workbox-precache')) await caches.delete(k);
+            }
             localStorage.removeItem('pkr-data-version');
             const regs = (await navigator.serviceWorker?.getRegistrations()) ?? [];
             await Promise.all(regs.map((r) => r.update().catch(() => undefined)));
@@ -317,6 +325,12 @@ export function InfoSheet(p: { manifest: Manifest | null; onClose: () => void })
         Recharger l’appli et les données
       </button>
       <p className="muted small">À utiliser si les PK ou l’appli semblent anciens. Il faut du réseau.</p>
+      <h3>Sans réseau</h3>
+      <p className="small">
+        L’appli garde sur le téléphone ce que tu consultes : les données PK sur au moins 20 km autour de chaque
+        repérage, et les morceaux de carte des voies déjà affichés. Sans réseau, le repérage, le suivi du PK et la carte
+        des voies marchent donc là où tu es déjà passé. Le fond de carte (rues, photo) n’est gardé que pour les endroits vus.
+      </p>
       <h3>Comment le PK est calculé</h3>
       <p>
         Le GPS donne ta position ; l’appli la rattache à la ligne SNCF la plus proche et lit le PK à cet endroit. Les PK le long des lignes sont recalés sur les quelque 63 000 repères dont SNCF
@@ -347,7 +361,7 @@ export function InfoSheet(p: { manifest: Manifest | null; onClose: () => void })
       <h3>Astuces</h3>
       <ul className="small">
         <li>« Me repérer » écoute le GPS jusqu’à 12 s et combine les mesures : reste immobile, à découvert.</li>
-        <li>Deux lignes proches : si ce n’est pas la bonne, touche la tienne dans « Autres lignes proches ».</li>
+        <li>Deux lignes proches : si ce n’est pas la bonne, touche le PK puis ta ligne dans « Autres lignes ici ».</li>
         <li>Appui long sur la carte : « me placer ici » (utile si le GPS est mauvais, ou pour préparer une intervention).</li>
         <li>Touche un élément de la carte pour voir son PK et sa ligne.</li>
       </ul>

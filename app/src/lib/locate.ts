@@ -43,6 +43,11 @@ export function cellsAround(p: LonLat, radius: number, perDegree: number): strin
  */
 export function matchInCells(cells: Cell[], p: LonLat, radius: number): Match {
   const proj = localProjector(p);
+  // Même projection que localProjector, calculée en place : pas d'objet créé par sommet (appelé à chaque position GPS).
+  const kx = proj.kx / 1e5;
+  const ky = proj.ky / 1e5;
+  const x0 = p[0] * 1e5;
+  const y0 = p[1] * 1e5;
   const lines = new Map<string, LineCandidate>();
   const tracks = new Map<string, TrackCandidate>();
 
@@ -50,23 +55,25 @@ export function matchInCells(cells: Cell[], p: LonLat, radius: number): Match {
     for (const [code, rg, statut, runs] of cell.l) {
       for (const run of runs) {
         for (let i = 0; i + 5 < run.length; i += 3) {
-          const a = proj.toXY([run[i] / 1e5, run[i + 1] / 1e5]);
-          const b = proj.toXY([run[i + 3] / 1e5, run[i + 4] / 1e5]);
+          const ax = (run[i] - x0) * kx;
+          const ay = (run[i + 1] - y0) * ky;
+          const bx = (run[i + 3] - x0) * kx;
+          const by = (run[i + 4] - y0) * ky;
           // Rejet rapide : segment entièrement d'un côté, hors du rayon.
           if (
-            (a[0] > radius && b[0] > radius) ||
-            (a[0] < -radius && b[0] < -radius) ||
-            (a[1] > radius && b[1] > radius) ||
-            (a[1] < -radius && b[1] < -radius)
+            (ax > radius && bx > radius) ||
+            (ax < -radius && bx < -radius) ||
+            (ay > radius && by > radius) ||
+            (ay < -radius && by < -radius)
           ) continue;
-          const hit = closestOnSegment(a[0], a[1], b[0], b[1]);
+          const hit = closestOnSegment(ax, ay, bx, by);
           if (hit.dist > radius) continue;
           const prev = lines.get(code);
           if (prev && prev.dist <= hit.dist) continue;
           const pkA = run[i + 2] / 1000;
           const pkB = run[i + 5] / 1000;
           const increasing = pkB >= pkA;
-          const [fx, fy] = increasing ? [b[0] - a[0], b[1] - a[1]] : [a[0] - b[0], a[1] - b[1]];
+          const [fx, fy] = increasing ? [bx - ax, by - ay] : [ax - bx, ay - by];
           lines.set(code, {
             code,
             rg,
@@ -84,9 +91,17 @@ export function matchInCells(cells: Cell[], p: LonLat, radius: number): Match {
       const key = `${code}|${name}`;
       for (const run of runs) {
         for (let i = 0; i + 3 < run.length; i += 2) {
-          const a = proj.toXY([run[i] / 1e5, run[i + 1] / 1e5]);
-          const b = proj.toXY([run[i + 2] / 1e5, run[i + 3] / 1e5]);
-          const hit = closestOnSegment(a[0], a[1], b[0], b[1]);
+          const ax = (run[i] - x0) * kx;
+          const ay = (run[i + 1] - y0) * ky;
+          const bx = (run[i + 2] - x0) * kx;
+          const by = (run[i + 3] - y0) * ky;
+          if (
+            (ax > radius && bx > radius) ||
+            (ax < -radius && bx < -radius) ||
+            (ay > radius && by > radius) ||
+            (ay < -radius && by < -radius)
+          ) continue;
+          const hit = closestOnSegment(ax, ay, bx, by);
           if (hit.dist > radius) continue;
           const prev = tracks.get(key);
           if (!prev || hit.dist < prev.dist) tracks.set(key, { code, name, type, dist: hit.dist });

@@ -70,3 +70,21 @@ describe('PkFilter', () => {
     expect(f.update('420000', 57, 5, 60000).pk).toBeCloseTo(57, 6);
   });
 });
+
+describe('PkFilter : positions répétées', () => {
+  it('une même position redonnée par le téléphone ne compte pas deux fois', () => {
+    const a = new PkFilter();
+    const b = new PkFilter();
+    let ea = a.update('830000', 20, 5, 0);
+    let eb = b.update('830000', 20, 5, 0);
+    for (let i = 1; i <= 20; i++) {
+      const pk = 20 + (1.4 * i) / 1000;
+      ea = a.update('830000', pk, 5, i * 1000);
+      // b reçoit chaque position deux fois (même heure, même PK).
+      b.update('830000', pk, 5, i * 1000);
+      eb = b.update('830000', pk, 5, i * 1000);
+    }
+    expect(eb.pk).toBeCloseTo(ea.pk, 6);
+    expect(eb.v).toBeCloseTo(ea.v, 6);
+  });
+});

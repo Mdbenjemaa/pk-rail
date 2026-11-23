@@ -31,6 +31,8 @@ export interface AccesSet {
   items: Acces[];
   /** Liste désactivée : cachée sur la carte, dans les recherches et dans les listes autour du PK. */
   hidden?: boolean;
+  /** Version des données PK avec laquelle lignes et PK ont été calculés (recalcul à chaque nouvelle version). */
+  v?: string;
 }
 
 const KEY = 'pkr-acces-v1';
@@ -67,11 +69,14 @@ function plainText(html: string): string {
     .join('\n');
 }
 
+/** Position plausible (longitude, latitude en degrés). */
+const validLonLat = (lon: number, lat: number) => Number.isFinite(lon) && Number.isFinite(lat) && Math.abs(lon) <= 180 && Math.abs(lat) <= 90;
+
 function firstCoordinate(text: string): LonLat | null {
   const first = text.trim().split(/\s+/)[0];
   if (!first) return null;
   const [lon, lat] = first.split(',').map(Number);
-  return Number.isFinite(lon) && Number.isFinite(lat) ? [lon, lat] : null;
+  return validLonLat(lon, lat) ? [lon, lat] : null;
 }
 
 /** Points d'un fichier KML : nom, description, données associées, et position. */
@@ -109,7 +114,7 @@ export function parseGeoJson(text: string): { title: string | null; points: RawP
   for (const f of fc.features) {
     let c: unknown = f.geometry && 'coordinates' in f.geometry ? f.geometry.coordinates : null;
     while (Array.isArray(c) && Array.isArray(c[0])) c = c[0];
-    if (!Array.isArray(c) || typeof c[0] !== 'number') continue;
+    if (!Array.isArray(c) || typeof c[0] !== 'number' || !validLonLat(c[0], c[1] as number)) continue;
     const props = (f.properties ?? {}) as Record<string, unknown>;
     const name = String(props.name ?? props.nom ?? props.Name ?? 'Accès');
     const desc = Object.entries(props)
@@ -137,6 +142,8 @@ export async function fetchMyMaps(src: { mid: string } | { link: string }): Prom
     method: 'POST',
     headers: { apikey: SB_KEY, 'Content-Type': 'application/json' },
     body: JSON.stringify(src),
+    // Réseau très faible : on n'attend pas indéfiniment.
+    signal: typeof AbortSignal.timeout === 'function' ? AbortSignal.timeout(45000) : undefined,
   }).catch(() => null);
   if (!res) throw new Error(offline);
   const d = (await res.json().catch(() => ({}))) as { kml?: string; error?: string };
@@ -172,7 +179,10 @@ export async function readMyMapsLink(link: string): Promise<Parsed> {
 }
 
 /** Lit un fichier importé : .kml, .kmz (KML compressé, export par défaut de My Maps), .geojson, .json. */
+const MAX_FILE = 30 * 1024 * 1024;
+
 export async function readAccesFile(file: File): Promise<Parsed> {
+  if (file.size > MAX_FILE) throw new Error('Fichier trop gros (plus de 30 Mo) : ce n’est sans doute pas une carte d’accès.');
   const lower = file.name.toLowerCase();
   const bytes = new Uint8Array(await file.arrayBuffer());
   const isZip = bytes[0] === 0x50 && bytes[1] === 0x4b;
@@ -191,19 +201,32 @@ export async function readAccesFile(file: File): Promise<Parsed> {
 export const readAccesSource = (src: File | string): Promise<Parsed> =>
   typeof src === 'string' ? readMyMapsLink(src) : readAccesFile(src);
 
-/** Rattache chaque point à la ligne la plus proche (moins de 300 m) et calcule son PK. */
-export async function snapAcces(points: RawPoint[]): Promise<Acces[]> {
+/**
+ * Rattache chaque point à la ligne la plus proche (moins de 300 m) et calcule son PK.
+ * Sans réseau, les points dont la zone n'est pas sur le téléphone restent sans ligne (`complete` = false) :
+ * le calcul sera refait plus tard.
+ */
+export async function snapAcces(points: RawPoint[]): Promise<{ items: Acces[]; complete: boolean; version: string }> {
   const m = await loadManifest();
   const known = new Set(m.cells);
   const out: Acces[] = [];
-  for (const p of points) {
-    const cells = (await Promise.all(cellsAround(p.lonlat, 300, m.cellsPerDegree).map((k) => loadCell(k, known)))).filter(
-      (c) => c !== null,
-    );
-    const best = matchInCells(cells, p.lonlat, 300).lines.sort((a, b) => a.dist - b.dist)[0];
-    out.push(best ? { ...p, code: best.code, pk: Math.round(best.pk * 1000) / 1000, dist: Math.round(best.dist) } : { ...p });
+  let complete = true;
+  for (let i = 0; i < points.length; i++) {
+    const p = { name: points[i].name, desc: points[i].desc, lonlat: points[i].lonlat };
+    // Une pause de temps en temps : l'écran reste fluide pendant le calcul d'une longue liste.
+    if (i && i % 40 === 0) await new Promise((r) => setTimeout(r, 0));
+    try {
+      const cells = (await Promise.all(cellsAround(p.lonlat, 300, m.cellsPerDegree).map((k) => loadCell(k, known)))).filter(
+        (c) => c !== null,
+      );
+      const best = matchInCells(cells, p.lonlat, 300).lines[0];
+      out.push(best ? { ...p, code: best.code, pk: Math.round(best.pk * 1000) / 1000, dist: Math.round(best.dist) } : p);
+    } catch {
+      complete = false;
+      out.push(p);
+    }
   }
-  return out;
+  return { items: out, complete, version: m.version };
 }
 
 /** Couche de carte des accès importés. */

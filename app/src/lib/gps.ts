@@ -5,7 +5,10 @@ export interface Fix {
   /** Rayon de précision annoncé par le téléphone (m, 68 %). */
   accuracy: number;
   samples: number;
+  /** Heure de la mesure (ms), pour le lissage du PK. */
   time: number;
+  /** Heure à laquelle le téléphone l'a donnée à l'appli (ms, horloge du téléphone) : pour savoir si le GPS s'est tu. */
+  received: number;
 }
 
 export interface Sample {
@@ -31,7 +34,8 @@ export function combine(samples: Sample[]): Fix | null {
     lon += s.lon * k;
     lat += s.lat * k;
   }
-  return { lonlat: [lon / w, lat / w], accuracy: best, samples: used.length, time: Date.now() };
+  const now = Date.now();
+  return { lonlat: [lon / w, lat / w], accuracy: best, samples: used.length, time: now, received: now };
 }
 
 export function geoErrorMessage(err: GeolocationPositionError | Error): string {
@@ -65,32 +69,46 @@ export function acquire(
   const samples: Sample[] = [];
   const start = Date.now();
 
+  let lastError: GeolocationPositionError | null = null;
   const promise = new Promise<Fix>((resolve, reject) => {
     if (!('geolocation' in navigator)) {
       reject(new Error('Ce navigateur ne donne pas accès au GPS.'));
       return;
     }
-    const done = () => {
+    let settled = false;
+    const stop = () => {
+      settled = true;
       if (watchId !== null) navigator.geolocation.clearWatch(watchId);
       if (timer) clearTimeout(timer);
+    };
+    const done = () => {
+      if (settled) return;
+      stop();
       const fix = combine(samples);
       if (fix) resolve(fix);
-      else reject(new Error('Aucune position reçue. Vérifie que la localisation est activée.'));
+      else reject(lastError ?? new Error('Aucune position reçue. Vérifie que la localisation est activée.'));
     };
     finish = done;
     watchId = navigator.geolocation.watchPosition(
       (pos) => {
-        samples.push({ lon: pos.coords.longitude, lat: pos.coords.latitude, accuracy: pos.coords.accuracy });
+        if (settled) return;
+        const { longitude: lon, latitude: lat, accuracy } = pos.coords;
+        if (!Number.isFinite(lon) || !Number.isFinite(lat) || !Number.isFinite(accuracy)) return;
+        samples.push({ lon, lat, accuracy });
         const current = combine(samples)!;
         const elapsed = Date.now() - start;
         onUpdate(current, elapsed);
         if (samples.length >= 3 && current.accuracy <= target && elapsed >= 3000) done();
       },
       (err) => {
-        if (watchId !== null) navigator.geolocation.clearWatch(watchId);
-        if (timer) clearTimeout(timer);
-        if (samples.length) done();
-        else reject(err);
+        if (settled) return;
+        // Refus : inutile d'attendre. Position momentanément indisponible ou trop lente : on continue d'écouter.
+        if (err.code === err.PERMISSION_DENIED) {
+          stop();
+          reject(err);
+          return;
+        }
+        lastError = err;
       },
       { enableHighAccuracy: true, maximumAge: 0, timeout: durationMs + 8000 },
     );
@@ -103,16 +121,24 @@ export function acquire(
   };
 }
 
+/**
+ * Position reçue pendant le suivi. L'heure de la mesure sert au lissage du PK ; si elle est très
+ * différente de l'horloge du téléphone (horloge GPS, téléphone mal réglé), on prend l'heure de réception.
+ */
+export function toFix(pos: { coords: { longitude: number; latitude: number; accuracy: number }; timestamp: number }, now = Date.now()): Fix | null {
+  const { longitude, latitude, accuracy } = pos.coords;
+  if (!Number.isFinite(longitude) || !Number.isFinite(latitude) || !Number.isFinite(accuracy)) return null;
+  const time = Number.isFinite(pos.timestamp) && Math.abs(pos.timestamp - now) < 30000 ? pos.timestamp : now;
+  return { lonlat: [longitude, latitude], accuracy, samples: 1, time, received: now };
+}
+
 /** Suivi en continu (marche le long des voies). */
 export function follow(onFix: (f: Fix) => void, onError: (e: GeolocationPositionError) => void): () => void {
   const id = navigator.geolocation.watchPosition(
-    (pos) =>
-      onFix({
-        lonlat: [pos.coords.longitude, pos.coords.latitude],
-        accuracy: pos.coords.accuracy,
-        samples: 1,
-        time: pos.timestamp,
-      }),
+    (pos) => {
+      const fix = toFix(pos);
+      if (fix) onFix(fix);
+    },
     onError,
     { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 },
   );

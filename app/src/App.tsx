@@ -12,10 +12,11 @@ import type { LocateState, Theme } from './components/state';
 import { TargetSheet, type Origin, type TargetState } from './components/TargetSheet';
 import { InstallBanner } from './components/Install';
 import { accesFeature, accesFeatures, findAccesAt, loadAcces, readAccesSource, saveAcces, snapAcces, type AccesSet } from './lib/acces';
+import { setUpdateGate } from './lib/update';
 import { fmtLine, fmtPk } from './lib/format';
-import { parsePk, pkRange, positionsAtPk } from './lib/pk';
-import { dataUpdate, loadCell, loadLine, loadManifest, type Manifest } from './lib/data';
-import type { LonLat } from './lib/geo';
+import { decodeGeom, parsePk, pkRange, positionsAtPk } from './lib/pk';
+import { dataUpdate, keepAround, loadCell, loadLine, loadManifest, OFFLINE_MESSAGE, type Manifest } from './lib/data';
+import { distance, type LonLat } from './lib/geo';
 import { acquire, follow, geoErrorMessage, type Acquisition, type Fix } from './lib/gps';
 import { accesOnLine, aroundHere } from './lib/lineinfo';
 import { PkFilter, type PkEstimate } from './lib/pkfilter';
@@ -23,7 +24,7 @@ import { keepScreenOn, type AwakeStatus } from './lib/wakelock';
 import { DEFAULT_FILTERS, type FilterKey, type Filters } from './lib/layers';
 import { cellsAround, matchInCells, pickFollowLine, pickLine, searchRadius, type LineCandidate } from './lib/locate';
 import { loadPref, meFeatures, savePref } from './lib/me';
-import { MapView, railSource, type FocusRequest } from './map/MapView';
+import { MapView, type FocusRequest } from './map/MapView';
 import { PREVIEW } from './lib/env';
 import type { Basemap } from './map/style';
 
@@ -54,36 +55,76 @@ export default function App() {
   const [me, setMe] = useState<FeatureCollection | null>(null);
   const [focus, setFocus] = useState<FocusRequest | null>(null);
   const [picked, setPicked] = useState<{ f: MapGeoJSONFeature; at: LonLat } | null>(null);
-  const [mapKey, setMapKey] = useState(0);
   const [target, setTarget] = useState<TargetState | null>(null);
   const [targetExpanded, setTargetExpanded] = useState(false);
   const [acces, setAcces] = useState<AccesSet[]>(() => loadAcces());
   const [importStatus, setImportStatus] = useState<ImportStatus | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  /** Suivi : problème en cours (données de la zone indisponibles sans réseau…). */
+  const [followIssue, setFollowIssue] = useState<string | null>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const bottomZone = useRef<HTMLDivElement>(null);
 
   const acquisition = useRef<Acquisition | null>(null);
   const stopFollow = useRef<(() => void) | null>(null);
-  const busy = useRef(false);
-  const pendingFix = useRef<Fix | null>(null);
+  /** Numéro du suivi en cours : un calcul lancé par un suivi arrêté entre-temps est ignoré. */
+  const followGen = useRef(0);
   const pkFilter = useRef(new PkFilter());
+  /** Dernier endroit autour duquel les données ont été gardées sur le téléphone (et si c'est fini). */
+  const kept = useRef<{ at: LonLat; time: number; ok: boolean } | null>(null);
   const followLine = useRef<string | null>(null);
   const releaseAwake = useRef<(() => void) | null>(null);
   const lastFix = useRef<{ fix: Fix; mode: 'gps' | 'manuel' | 'suivi'; forced?: string } | null>(null);
 
   useEffect(() => {
-    loadManifest().then((m) => {
-      setManifest(m);
-      if (dataUpdate.hadOffline) {
-        // Données PK mises à jour : la carte repart des nouvelles tuiles.
-        railSource.reset();
-        setMapKey((k) => k + 1);
-        showToast('Nouvelles données PK chargées.');
-      }
-    }, (e: Error) => setDataError(e.message));
+    let done = false;
+    const load = () =>
+      loadManifest().then(
+        (m) => {
+          if (done) return;
+          done = true;
+          setManifest(m);
+          setDataError(null);
+          if (dataUpdate.changed) showToast('Nouvelles données PK chargées.');
+          void resnapAcces(m);
+        },
+        (e: Error) =>
+          setDataError(
+            e.message === OFFLINE_MESSAGE
+              ? 'pas de réseau, et les données PK ne sont pas encore sur ce téléphone. Ouvre l’appli une première fois avec du réseau.'
+              : e.message,
+          ),
+      );
+    void load();
+    // Réseau revenu : on réessaie.
+    const retry = () => {
+      if (!done) void load();
+    };
+    window.addEventListener('online', retry);
+    return () => window.removeEventListener('online', retry);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  /**
+   * Accès importés avec une autre version des données (ou sans réseau) : on recalcule leur ligne et leur PK,
+   * pour qu'ils restent justes quand les PK sont recalés.
+   */
+  const resnapAcces = async (m: Manifest) => {
+    for (const set of loadAcces()) {
+      if (set.v === m.version || !set.items.length) continue;
+      try {
+        const { items, complete, version } = await snapAcces(set.items);
+        if (!complete) continue;
+        setAcces((cur) => {
+          const next = cur.map((s) => (s.id === set.id ? { ...s, items, v: version } : s));
+          saveAcces(next);
+          return next;
+        });
+      } catch {
+        /* pas de réseau : ce sera pour la prochaine ouverture */
+      }
+    }
+  };
   useEffect(() => savePref('pkr-filters', filters), [filters]);
   useEffect(() => savePref('pkr-basemap', basemap), [basemap]);
   useEffect(() => savePref('pkr-theme', theme), [theme]);
@@ -116,6 +157,10 @@ export default function App() {
   const analyse = useCallback(
     async (fix: Fix, mode: 'gps' | 'manuel' | 'suivi', forcedCode?: string, recenter = true, prefer?: string | null): Promise<LineCandidate | null> => {
       const m = manifest ?? (await loadManifest());
+      if (!manifest) {
+        setManifest(m);
+        setDataError(null);
+      }
       lastFix.current = { fix, mode, forced: forcedCode };
       const radius = searchRadius(fix.accuracy);
       const known = new Set(m.cells);
@@ -130,6 +175,20 @@ export default function App() {
       setLoc({ phase: 'result', fix, mode, radius, match, chosen: chosen ?? null, doc });
       setMe(meFeatures(fix.lonlat, fix.accuracy, chosen?.point ?? null));
       if (recenter) focusOn(fix.lonlat, mode === 'suivi' ? undefined : 17);
+      // Données autour gardées sur le téléphone (une fois tous les 3 km, ou une minute après un échec) :
+      // la suite marche sans réseau.
+      const k = kept.current;
+      if (!k || distance(k.at, fix.lonlat) > 3000 || (!k.ok && Date.now() - k.time > 60_000)) {
+        const entry = { at: fix.lonlat, time: Date.now(), ok: false };
+        kept.current = entry;
+        const near = matchInCells(cells, fix.lonlat, 2500).lines.map((l) => l.code);
+        setTimeout(() => {
+          keepAround(fix.lonlat, near).then(
+            (ok) => (entry.ok = ok),
+            () => undefined,
+          );
+        }, 1500);
+      }
       return chosen ?? null;
     },
     [manifest, focusOn],
@@ -156,7 +215,11 @@ export default function App() {
     });
     acquisition.current = acq;
     acq.promise
-      .then((fix) => analyse(fix, 'gps'))
+      .then((fix) => {
+        // Le réseau peut être lent : on dit que le PK est en calcul.
+        setLoc({ phase: 'acquiring', fix, elapsed: 0, computing: true });
+        return analyse(fix, 'gps');
+      })
       .catch((e) => setLoc({ phase: 'error', message: geoErrorMessage(e) }))
       .finally(() => {
         acquisition.current = null;
@@ -167,9 +230,10 @@ export default function App() {
   analyseRef.current = analyse;
 
   const stopFollowing = () => {
+    followGen.current++;
     stopFollow.current?.();
     stopFollow.current = null;
-    pendingFix.current = null;
+    setFollowIssue(null);
     releaseAwake.current?.();
     releaseAwake.current = null;
     followLine.current = null;
@@ -196,29 +260,42 @@ export default function App() {
     followLine.current = loc.phase === 'result' ? (loc.chosen?.code ?? null) : null;
     if (lastFix.current) focusOn(lastFix.current.fix.lonlat);
     releaseAwake.current = keepScreenOn(setAwake);
+    const gen = followGen.current;
+    const alive = () => gen === followGen.current;
     // Les positions arrivent parfois plus vite que le calcul : on traite toujours la plus récente.
+    let pending: Fix | null = null;
+    let running = false;
     const run = async () => {
-      if (busy.current) return;
-      busy.current = true;
+      if (running) return;
+      running = true;
       try {
-        while (pendingFix.current && stopFollow.current) {
-          const fix = pendingFix.current;
-          pendingFix.current = null;
-          const chosen = await analyseRef.current(fix, 'suivi', lastFix.current?.forced, false, followLine.current);
-          if (!stopFollow.current) break;
-          followLine.current = chosen?.code ?? null;
-          const est = chosen ? pkFilter.current.update(chosen.code, chosen.pk, fix.accuracy, fix.time) : null;
-          setFollowPk(est);
-          if (est && est.dir !== 0) setFollowDir(est.dir);
+        while (pending && alive()) {
+          const fix: Fix = pending;
+          pending = null;
+          try {
+            const chosen = await analyseRef.current(fix, 'suivi', lastFix.current?.forced, false, followLine.current);
+            if (!alive()) break;
+            followLine.current = chosen?.code ?? null;
+            const est = chosen ? pkFilter.current.update(chosen.code, chosen.pk, fix.accuracy, fix.time) : null;
+            setFollowPk(est);
+            if (est && est.dir !== 0) setFollowDir(est.dir);
+            setFollowIssue(null);
+          } catch (e) {
+            // Zone pas encore sur le téléphone et pas de réseau : on montre la position, le PK attend.
+            if (!alive()) break;
+            setFollowIssue(e instanceof Error ? e.message : 'Données indisponibles ici.');
+            setMe(meFeatures(fix.lonlat, fix.accuracy, null));
+          }
           setFollowAt(fix.lonlat);
         }
       } finally {
-        busy.current = false;
+        running = false;
       }
     };
     stopFollow.current = follow(
       (fix) => {
-        pendingFix.current = fix;
+        if (!alive()) return;
+        pending = fix;
         void run();
       },
       (e) => {
@@ -241,7 +318,10 @@ export default function App() {
     stopFollowing();
     setPicked(null);
     setTarget(null);
-    void analyse({ lonlat: at, accuracy: 5, samples: 1, time: Date.now() }, 'manuel');
+    const now = Date.now();
+    analyse({ lonlat: at, accuracy: 5, samples: 1, time: now, received: now }, 'manuel').catch((e: Error) =>
+      setLoc({ phase: 'error', message: e.message }),
+    );
   };
 
   const closeLocate = () => {
@@ -282,6 +362,31 @@ export default function App() {
     }
   };
 
+  /** Une ligne cherchée par son numéro : on la montre en entier. */
+  const showLine = async (code: string) => {
+    try {
+      const doc = await loadLine(code);
+      let w = Infinity;
+      let s = Infinity;
+      let e = -Infinity;
+      let n = -Infinity;
+      for (const t of doc.troncons) {
+        for (const [lon, lat] of t.g ? decodeGeom(t.g) : []) {
+          w = Math.min(w, lon);
+          e = Math.max(e, lon);
+          s = Math.min(s, lat);
+          n = Math.max(n, lat);
+        }
+      }
+      if (!Number.isFinite(w)) return showToast(`Tracé de la ligne ${fmtLine(code)} indisponible.`);
+      setPanel('none');
+      if (following) setMapFree(true);
+      setFocus((f) => ({ center: [(w + e) / 2, (s + n) / 2], bounds: [[w, s], [e, n]], seq: (f?.seq ?? 0) + 1 }));
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Ligne indisponible.');
+    }
+  };
+
   const res = loc.phase === 'result' ? loc : null;
   const chosen = res?.chosen ?? null;
   const chosenCode = chosen?.code ?? null;
@@ -289,7 +394,11 @@ export default function App() {
   /** Listes d'accès activées : les seules affichées sur la carte, dans les recherches et autour du PK. */
   const accesOn = useMemo(() => acces.filter((s) => !s.hidden), [acces]);
   const accesHere = useMemo(() => (chosenCode ? accesOnLine(accesOn, chosenCode) : []), [accesOn, chosenCode]);
-  const around = res?.doc && herePk !== null ? aroundHere(res.doc, herePk, filters, typeFiltre, accesHere) : null;
+  const resDoc = res?.doc ?? null;
+  const around = useMemo(
+    () => (resDoc && herePk !== null ? aroundHere(resDoc, herePk, filters, typeFiltre, accesHere) : null),
+    [resDoc, herePk, filters, typeFiltre, accesHere],
+  );
 
   const origin: Origin | null = res && chosen ? { code: chosen.code, pk: chosen.pk, lonlat: res.fix.lonlat } : null;
 
@@ -309,14 +418,20 @@ export default function App() {
     try {
       const { title, points } = await readAccesSource(src);
       if (!points.length) throw new Error('Aucun point trouvé dans ce fichier.');
-      const items = await snapAcces(points);
+      const { items, complete, version } = await snapAcces(points);
       const name = title || (typeof src === 'string' ? 'Carte Google My Maps' : src.name.replace(/\.(kml|kmz|geojson|json)$/i, ''));
-      const next = [...acces, { id: String(Date.now()), name, imported: Date.now(), items }];
+      const set: AccesSet = { id: String(Date.now()), name, imported: Date.now(), items, v: complete ? version : undefined };
+      const next = [...acces, set];
       if (!saveAcces(next)) throw new Error('Le téléphone a refusé l’enregistrement (stockage plein ?).');
       setAcces(next);
       setFilters((f) => ({ ...f, acces: true }));
       const snapped = items.filter((a) => a.code).length;
-      setImportStatus({ busy: false, text: `${items.length} accès importés, dont ${snapped} rattachés à une ligne avec leur PK.` });
+      setImportStatus({
+        busy: false,
+        text:
+          `${items.length} accès importés, dont ${snapped} rattachés à une ligne avec leur PK.` +
+          (complete ? '' : ' Sans réseau, certains n’ont pas encore leur PK : il sera calculé au prochain lancement avec du réseau.'),
+      });
     } catch (e) {
       setImportStatus({ busy: false, error: true, text: e instanceof Error ? e.message : 'Import impossible.' });
     }
@@ -361,6 +476,11 @@ export default function App() {
     setPanel('autour');
   };
 
+  // Nouvelle version de l'appli : rechargement seulement au repos (jamais pendant un suivi ou un repérage).
+  const updateBusy = following || loc.phase === 'acquiring' || !!importStatus?.busy;
+  const updateIdle = panel === 'none' && !target && !picked && (loc.phase === 'idle' || loc.phase === 'error');
+  useEffect(() => setUpdateGate({ busy: updateBusy, idle: updateIdle }), [updateBusy, updateIdle]);
+
   // Le bandeau du haut, et la fiche du bas selon la situation.
   const bannerShown = following || loc.phase === 'acquiring' || loc.phase === 'result';
   const bannerHasMenu = bannerShown && !following;
@@ -403,7 +523,6 @@ export default function App() {
   return (
     <div className="app">
       <MapView
-        key={mapKey}
         basemap={basemap}
         night={night}
         filters={filters}
@@ -426,6 +545,7 @@ export default function App() {
           manifest={manifest}
           following={following}
           followPk={followPk}
+          followIssue={followIssue}
           awake={awake}
           onMenu={() => setPanel('menu')}
           onDetails={() => openAutour('ligne')}
@@ -474,6 +594,7 @@ export default function App() {
           currentLine={chosenCode}
           acces={accesOn}
           onGo={(at, zoom) => showOnMap(at, zoom)}
+          onLine={(code) => void showLine(code)}
           onPk={(code, pk) => void goToPk(code, pk)}
           onAcces={openAcces}
           onClose={() => setPanel('none')}
@@ -495,7 +616,7 @@ export default function App() {
           onTab={setAutourTab}
           onFocus={(at) => showOnMap(at)}
           onChoose={(code) => {
-            if (lastFix.current) void analyse(lastFix.current.fix, lastFix.current.mode, code, false);
+            if (lastFix.current) analyse(lastFix.current.fix, lastFix.current.mode, code, false).catch((e: Error) => showToast(e.message));
           }}
           onGoPk={(code, text) => void goToPk(code, text)}
           onClose={() => setPanel('none')}

@@ -10,7 +10,7 @@ import { DATA_URL, PMTILES_URL } from '../lib/data';
 import { PREVIEW } from '../lib/env';
 import { FILTERS, type Filters } from '../lib/layers';
 import { RFN_SPRITE, SIGNAL_ICONS } from '../lib/signaux';
-import { nightLayers } from './night';
+import { frenchLabels, nightLayers } from './night';
 
 export type Basemap = 'plan' | 'photo' | 'aucun';
 
@@ -243,7 +243,7 @@ export async function buildStyle(basemap: Basemap, filters: Filters, o: Overlays
     const plan = await planBase();
     if (plan) {
       Object.assign(sources, plan.sources);
-      baseLayers = plan.layers;
+      baseLayers = frenchLabels(plan.layers);
       sprite = plan.sprite;
     }
   } else if (basemap === 'photo') {

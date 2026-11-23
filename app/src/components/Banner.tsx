@@ -13,6 +13,8 @@ interface Props {
   manifest: Manifest | null;
   following: boolean;
   followPk: PkEstimate | null;
+  /** Suivi : problème en cours (données de la zone indisponibles sans réseau…). */
+  followIssue: string | null;
   awake: AwakeStatus | null;
   onMenu: () => void;
   /** Toucher le PK : détails de la ligne. */
@@ -48,14 +50,27 @@ function nearestTrack(res: LocateResult) {
 }
 
 /** Suivi en direct : gros compteur PK, sens de marche, vitesse, état du GPS et de l'écran. */
-function LiveBanner({ res, followPk, awake }: { res: LocateResult | null; followPk: PkEstimate | null; awake: AwakeStatus | null }) {
+function LiveBanner({
+  res,
+  followPk,
+  issue,
+  awake,
+}: {
+  res: LocateResult | null;
+  followPk: PkEstimate | null;
+  issue: string | null;
+  awake: AwakeStatus | null;
+}) {
   const live = res?.mode === 'suivi' ? res : null;
   const chosen = live?.chosen ?? null;
   const fix = live?.fix ?? null;
-  const since = useSince(fix?.time ?? 0);
+  // Heure de réception (horloge du téléphone) : l'heure GPS peut être décalée.
+  const since = useSince(fix?.received ?? 0);
   const pk = chosen ? (followPk?.pk ?? chosen.pk) : null;
   const dir = followPk?.dir ?? 0;
   const kmh = followPk && dir !== 0 ? Math.round(Math.abs(followPk.v) * 3.6) : 0;
+  // Le sens se confirme après quelques secondes de déplacement : en attendant, on ne dit pas « à l'arrêt ».
+  const moving = !!followPk && Math.abs(followPk.v) >= 1;
   const track = live ? nearestTrack(live) : null;
   return (
     <header className="banner live">
@@ -82,7 +97,7 @@ function LiveBanner({ res, followPk, awake }: { res: LocateResult | null; follow
           </div>
           <div className="dir-row">
             {dir === 0 ? (
-              <span>À l’arrêt · le sens s’affiche quand tu avances</span>
+              <span>{moving ? 'En mouvement · sens des PK en cours de calcul' : 'À l’arrêt · le sens s’affiche quand tu avances'}</span>
             ) : (
               <>
                 <Icon name={dir === 1 ? 'up' : 'dn'} size={20} />
@@ -99,9 +114,13 @@ function LiveBanner({ res, followPk, awake }: { res: LocateResult | null; follow
       ) : live && !chosen ? (
         <div className="banner-wait">Aucune ligne à moins de {live.radius} m</div>
       ) : (
-        <div className="banner-wait">Recherche du GPS…</div>
+        <div className="banner-wait">{issue ? 'PK indisponible ici' : 'Recherche du GPS…'}</div>
       )}
-      {fix && since >= 8 && <div className="banner-warn">GPS perdu depuis {since} s : le PK n’avance plus.</div>}
+      {issue ? (
+        <div className="banner-warn">{issue} Le PK n’avance plus.</div>
+      ) : (
+        fix && since >= 8 && <div className="banner-warn">GPS perdu depuis {since} s : le PK n’avance plus.</div>
+      )}
       {awake && awake !== 'on' && (
         <div className="banner-note">Pense à couper la mise en veille de l’écran pendant le suivi.</div>
       )}
@@ -112,10 +131,24 @@ function LiveBanner({ res, followPk, awake }: { res: LocateResult | null; follow
 /** Bandeau du haut : le PK en très gros, la ligne, la voie et les caractéristiques utiles. */
 export function Banner(p: Props) {
   const { state } = p;
-  if (p.following) return <LiveBanner res={state.phase === 'result' ? state : null} followPk={p.followPk} awake={p.awake} />;
+  if (p.following) return <LiveBanner res={state.phase === 'result' ? state : null} followPk={p.followPk} issue={p.followIssue} awake={p.awake} />;
 
   if (state.phase === 'acquiring') {
     const { fix } = state;
+    if (state.computing) {
+      return (
+        <header className="banner">
+          <div className="banner-row">
+            <span className="banner-eyebrow">Position prise</span>
+            <span className="banner-pills">
+              {fix && <GpsPill accuracy={fix.accuracy} />}
+              <MenuButton onMenu={p.onMenu} />
+            </span>
+          </div>
+          <div className="banner-big">Calcul du PK…</div>
+        </header>
+      );
+    }
     return (
       <header className="banner">
         <div className="banner-row">

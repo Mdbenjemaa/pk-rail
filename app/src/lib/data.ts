@@ -48,9 +48,73 @@ export interface LineDoc {
 export type GareEntry = [string, number, number, string, number | null];
 
 async function getJson<T>(url: string): Promise<T> {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`Données indisponibles (${res.status})`);
+  const res = await fetchOk(url);
   return (await res.json()) as T;
+}
+
+/** Message quand ni le réseau ni le téléphone n'ont les données demandées. */
+export const OFFLINE_MESSAGE =
+  'Pas de réseau, et les données de cet endroit ne sont pas encore sur le téléphone. Réessaie avec du réseau : elles seront ensuite gardées.';
+
+/** Réponse du réseau, ou une erreur lisible (pas de réseau, fichier absent). */
+async function fetchOk(url: string, init?: RequestInit & { timeoutMs?: number }): Promise<Response> {
+  const { timeoutMs, ...rest } = init ?? {};
+  let res: Response;
+  try {
+    const signal = timeoutMs && typeof AbortSignal.timeout === 'function' ? AbortSignal.timeout(timeoutMs) : undefined;
+    res = await fetch(url, { ...rest, signal });
+  } catch {
+    throw new Error(OFFLINE_MESSAGE);
+  }
+  if (!res.ok) throw new Error(`Données indisponibles (erreur ${res.status})`);
+  return res;
+}
+
+async function openCache(name: string): Promise<Cache | null> {
+  if (typeof caches === 'undefined') return null;
+  try {
+    return await caches.open(name);
+  } catch {
+    return null;
+  }
+}
+
+async function fromCache<T>(cache: Cache | null, url: string): Promise<T | undefined> {
+  if (!cache) return undefined;
+  try {
+    const hit = await cache.match(url);
+    return hit ? ((await hit.json()) as T) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Fichier de données gardé sur le téléphone (Cache Storage), avec ou sans service worker :
+ * - « cache » : d'abord le téléphone, sinon le réseau (cases, fiches de ligne, gares : leur adresse change avec la version) ;
+ * - « réseau » : d'abord le réseau, pour voir passer les nouvelles versions (manifeste), sinon le téléphone.
+ */
+export async function cachedJson<T>(url: string, mode: 'cache' | 'reseau'): Promise<T> {
+  const cache = await openCache(DATA_CACHE);
+  if (mode === 'cache') {
+    const hit = await fromCache<T>(cache, url);
+    if (hit !== undefined) return hit;
+  }
+  // Réseau lent : si le téléphone a une copie, on ne l'attend pas plus de 6 s ; sinon on attend le réseau.
+  const hasCopy = mode === 'reseau' && !!(await cache?.match(url).catch(() => undefined));
+  try {
+    const res = await fetchOk(url, mode === 'reseau' ? { cache: 'no-cache', timeoutMs: hasCopy ? 6000 : undefined } : undefined);
+    const keep = cache?.put(url, res.clone()).catch(() => undefined);
+    const data = (await res.json()) as T;
+    await keep;
+    return data;
+  } catch (e) {
+    if (mode === 'reseau') {
+      const hit = await fromCache<T>(cache, url);
+      if (hit !== undefined) return hit;
+    }
+    throw e;
+  }
 }
 
 /* Aperçu : cases et fiches de ligne regroupées en paquets (data/packs). */
@@ -74,7 +138,7 @@ async function fromPack<T>(kind: 'c' | 'l', key: string): Promise<T> {
 
 let manifestPromise: Promise<Manifest> | null = null;
 export function loadManifest(): Promise<Manifest> {
-  manifestPromise ??= getJson<Manifest>(`${DATA_URL}manifest.json`)
+  manifestPromise ??= (PREVIEW ? getJson<Manifest>(`${DATA_URL}manifest.json`) : cachedJson<Manifest>(`${DATA_URL}manifest.json`, 'reseau'))
     .then(async (m) => {
       await purgeIfNewData(m);
       return m;
@@ -88,14 +152,18 @@ export function loadManifest(): Promise<Manifest> {
 
 /** Adresse d'un fichier de données propre à leur version : une ancienne copie gardée ne peut pas resservir. */
 const versioned = (url: string, m: Manifest) => (PREVIEW ? url : `${url}?v=${encodeURIComponent(m.version)}`);
+export const cellUrl = (key: string, m: Manifest) => versioned(`${DATA_URL}cells/${key}.json`, m);
+export const lineUrl = (code: string, m: Manifest) => versioned(`${DATA_URL}lines/${code}.json`, m);
 
-/** Nouvelle version des données : renseignée si le téléphone avait téléchargé la carte hors-ligne. */
-export const dataUpdate = { changed: false, hadOffline: false };
+/** Nouvelle version des données (déjà vue une autre fois sur ce téléphone). */
+export const dataUpdate = { changed: false };
 const VERSION_KEY = 'pkr-data-version';
+/** Début de cette ouverture de l'appli : ce qui a été gardé avant vient d'une version précédente. */
+const SESSION_START = Date.now();
 
 /**
- * Les cases et fiches de ligne sont gardées sur le téléphone. Quand les données changent (nouvelle version
- * dans le manifeste), on jette les anciennes pour ne pas mélanger anciens et nouveaux PK.
+ * Les cases, fiches de ligne et morceaux de carte sont gardés sur le téléphone. Quand les données changent
+ * (nouvelle version dans le manifeste), on jette les anciens pour ne pas mélanger anciens et nouveaux PK.
  */
 async function purgeIfNewData(m: Manifest): Promise<void> {
   let prev: string | null = null;
@@ -105,16 +173,28 @@ async function purgeIfNewData(m: Manifest): Promise<void> {
     return;
   }
   if (prev === m.version) return;
-  if ('caches' in globalThis) {
+  const cache = await openCache(DATA_CACHE);
+  if (cache) {
     try {
-      const cache = await caches.open(DATA_CACHE);
-      dataUpdate.hadOffline = !!(await cache.match(PMTILES_URL));
       for (const req of await cache.keys()) if (!req.url.endsWith('manifest.json')) await cache.delete(req);
     } catch {
       /* stockage indisponible */
     }
   }
-  dataUpdate.changed = true;
+  // Morceaux de carte : seuls ceux gardés lors des ouvertures précédentes sont anciens. Ceux de cette ouverture
+  // (lus sur le réseau, donc à jour, dont l'en-tête du fichier lu au démarrage) restent.
+  const tiles = prev === null ? null : await openCache(TILES_CACHE);
+  if (tiles) {
+    try {
+      for (const req of await tiles.keys()) {
+        const res = await tiles.match(req);
+        if (!res || Number(res.headers.get('x-time') ?? 0) < SESSION_START) await tiles.delete(req);
+      }
+    } catch {
+      /* rien */
+    }
+  }
+  dataUpdate.changed = prev !== null;
   cellCache.clear();
   lineCache.clear();
   garesPromise = null;
@@ -130,7 +210,7 @@ export function loadCell(key: string, known: Set<string>): Promise<Cell | null> 
   if (!known.has(key)) return Promise.resolve(null);
   let p = cellCache.get(key);
   if (!p) {
-    p = (PREVIEW ? fromPack<Cell>('c', key) : loadManifest().then((m) => getJson<Cell>(versioned(`${DATA_URL}cells/${key}.json`, m)))).catch((e) => {
+    p = (PREVIEW ? fromPack<Cell>('c', key) : loadManifest().then((m) => cachedJson<Cell>(cellUrl(key, m), 'cache'))).catch((e) => {
       cellCache.delete(key);
       throw e;
     });
@@ -141,13 +221,9 @@ export function loadCell(key: string, known: Set<string>): Promise<Cell | null> 
 
 const lineCache = new Map<string, Promise<LineDoc>>();
 export function loadLine(code: string): Promise<LineDoc> {
-  return loadLineRaw(code);
-}
-
-function loadLineRaw(code: string): Promise<LineDoc> {
   let p = lineCache.get(code);
   if (!p) {
-    p = (PREVIEW ? fromPack<LineDoc>('l', code) : loadManifest().then((m) => getJson<LineDoc>(versioned(`${DATA_URL}lines/${code}.json`, m)))).catch((e) => {
+    p = (PREVIEW ? fromPack<LineDoc>('l', code) : loadManifest().then((m) => cachedJson<LineDoc>(lineUrl(code, m), 'cache'))).catch((e) => {
       lineCache.delete(code);
       throw e;
     });
@@ -158,19 +234,66 @@ function loadLineRaw(code: string): Promise<LineDoc> {
 
 let garesPromise: Promise<GareEntry[]> | null = null;
 export function loadGares(): Promise<GareEntry[]> {
-  garesPromise ??= loadManifest().then((m) => getJson<GareEntry[]>(versioned(`${DATA_URL}gares.json`, m))).catch((e) => {
-    garesPromise = null;
-    throw e;
-  });
+  garesPromise ??= loadManifest()
+    .then((m) => (PREVIEW ? getJson<GareEntry[]>(`${DATA_URL}gares.json`) : cachedJson<GareEntry[]>(versioned(`${DATA_URL}gares.json`, m), 'cache')))
+    .catch((e) => {
+      garesPromise = null;
+      throw e;
+    });
   return garesPromise;
 }
 
-/* ---------- Tuiles de la carte : depuis le cache hors-ligne si présent, sinon le réseau ---------- */
+/** Les 9 cases autour du point (la sienne et ses voisines : environ 50 × 80 km). */
+export function cellsNear(p: [number, number], perDegree: number): string[] {
+  const x = Math.floor(p[0] * perDegree);
+  const y = Math.floor(p[1] * perDegree);
+  const out: string[] = [];
+  for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) out.push(`${x + dx}_${y + dy}`);
+  return out;
+}
 
-export class OfflineFirstSource implements Source {
+/**
+ * Garde sur le téléphone, sans les ouvrir, les données autour de la position (cases voisines, fiches des lignes
+ * proches) : le repérage et le suivi continuent dans les zones sans réseau (tranchées, tunnels, campagne).
+ */
+export async function keepAround(p: [number, number], lineCodes: string[]): Promise<boolean> {
+  if (PREVIEW || (typeof navigator !== 'undefined' && navigator.onLine === false)) return false;
+  const conn = (navigator as Navigator & { connection?: { saveData?: boolean } }).connection;
+  // Économiseur de données demandé : on ne télécharge rien d'avance.
+  if (conn?.saveData) return true;
+  const [m, cache] = await Promise.all([loadManifest(), openCache(DATA_CACHE)]);
+  if (!cache) return true;
+  const known = new Set(m.cells);
+  const urls = [
+    ...cellsNear(p, m.cellsPerDegree).filter((k) => known.has(k)).map((k) => cellUrl(k, m)),
+    ...[...new Set(lineCodes)].filter((c) => m.lines[c]).map((c) => lineUrl(c, m)),
+  ];
+  for (const url of urls) {
+    try {
+      if (await cache.match(url)) continue;
+      const res = await fetch(url);
+      if (res.ok) await cache.put(url, res);
+    } catch {
+      return false; // réseau perdu ou stockage plein : on réessaiera un peu plus tard
+    }
+  }
+  return true;
+}
+
+/* ---------- Carte des voies (PMTiles) : morceaux déjà vus gardés pour la suite sans réseau ---------- */
+
+/** Morceaux du fichier de la carte des voies déjà téléchargés (jetés à chaque nouvelle version des données). */
+export const TILES_CACHE = 'pkr-carte-voies';
+const TILES_MAX = 6000;
+
+/**
+ * Lit le fichier de la carte par morceaux sur le réseau, et garde chaque morceau reçu. Sans réseau,
+ * les morceaux déjà vus resservent : la carte des voies reste affichée là où on est déjà passé.
+ */
+export class RailTilesSource implements Source {
   private readonly url: string;
   private readonly network: FetchSource;
-  private blob: Promise<Blob | null> | null = null;
+  private puts = 0;
 
   constructor(url: string) {
     this.url = url;
@@ -181,28 +304,50 @@ export class OfflineFirstSource implements Source {
     return this.url;
   }
 
-  /** À appeler après un téléchargement ou un effacement des données hors-ligne. */
-  reset(): void {
-    this.blob = null;
-  }
+  reset(): void {}
 
-  private cached(): Promise<Blob | null> {
-    this.blob ??= (async () => {
-      if (!('caches' in globalThis)) return null;
-      try {
-        const res = await (await caches.open(DATA_CACHE)).match(this.url);
-        return res ? await res.blob() : null;
-      } catch {
-        return null;
-      }
-    })();
-    return this.blob;
+  private key(offset: number, length: number): string {
+    return `${this.url}?octets=${offset}-${length}`;
   }
 
   async getBytes(offset: number, length: number, signal?: AbortSignal, etag?: string): Promise<RangeResponse> {
-    const blob = await this.cached();
-    if (blob) return { data: await blob.slice(offset, offset + length).arrayBuffer() };
-    return this.network.getBytes(offset, length, signal, etag);
+    try {
+      const r = await this.network.getBytes(offset, length, signal, etag);
+      // Copie faite tout de suite : la carte peut ensuite céder ces octets à son fil de calcul.
+      void this.keep(offset, length, r.data.slice(0), r.etag);
+      return r;
+    } catch (e) {
+      // Seul le manque de réseau se rattrape ; une demande annulée ou un fichier changé suivent leur cours.
+      if (!(e instanceof TypeError) || signal?.aborted) throw e;
+      const hit = await this.kept(offset, length, etag);
+      if (hit) return hit;
+      throw e;
+    }
+  }
+
+  private async kept(offset: number, length: number, etag?: string): Promise<RangeResponse | null> {
+    const cache = await openCache(TILES_CACHE);
+    const res = await cache?.match(this.key(offset, length)).catch(() => undefined);
+    if (!res) return null;
+    const stored = res.headers.get('x-etag') || undefined;
+    // Morceau d'une autre version du fichier : inutilisable.
+    if (etag && stored && stored !== etag) return null;
+    return { data: await res.arrayBuffer(), etag: stored };
+  }
+
+  private async keep(offset: number, length: number, data: ArrayBuffer, etag?: string): Promise<void> {
+    const cache = await openCache(TILES_CACHE);
+    if (!cache) return;
+    try {
+      await cache.put(this.key(offset, length), new Response(data, { headers: { 'x-etag': etag ?? '', 'x-time': String(Date.now()) } }));
+      // De temps en temps, on retire les plus anciens morceaux au-delà de la limite.
+      if (++this.puts % 200 === 0) {
+        const keys = await cache.keys();
+        for (const k of keys.slice(0, Math.max(0, keys.length - TILES_MAX))) await cache.delete(k);
+      }
+    } catch {
+      /* stockage plein : tant pis pour ce morceau */
+    }
   }
 }
 
@@ -266,78 +411,4 @@ export class ChunkedSource implements Source {
     });
     return { data: out.buffer };
   }
-}
-
-/* ---------- Téléchargement hors-ligne ---------- */
-
-export interface OfflineState {
-  files: number;
-  total: number;
-  pmtiles: boolean;
-}
-
-function allDataUrls(m: Manifest): string[] {
-  return [
-    `${DATA_URL}manifest.json`,
-    versioned(`${DATA_URL}gares.json`, m),
-    ...m.cells.map((c) => versioned(`${DATA_URL}cells/${c}.json`, m)),
-    ...Object.keys(m.lines).map((c) => versioned(`${DATA_URL}lines/${c}.json`, m)),
-  ];
-}
-
-export async function offlineState(m: Manifest): Promise<OfflineState> {
-  const urls = allDataUrls(m);
-  if (!('caches' in globalThis)) return { files: 0, total: urls.length, pmtiles: false };
-  const cache = await caches.open(DATA_CACHE);
-  const keys = new Set((await cache.keys()).map((r) => r.url));
-  return {
-    files: urls.filter((u) => keys.has(u)).length,
-    total: urls.length,
-    pmtiles: keys.has(PMTILES_URL),
-  };
-}
-
-export async function downloadOffline(
-  m: Manifest,
-  onProgress: (done: number, total: number, label: string) => void,
-  signal: AbortSignal,
-): Promise<void> {
-  const cache = await caches.open(DATA_CACHE);
-  const have = new Set((await cache.keys()).map((r) => r.url));
-  const urls = allDataUrls(m).filter((u) => !have.has(u) || u.endsWith('manifest.json'));
-  const total = urls.length + 1;
-  let done = 0;
-
-  // Tuiles de la carte d'abord : c'est le plus gros fichier.
-  if (!have.has(PMTILES_URL)) {
-    onProgress(done, total, 'Carte des voies (≈ 38 Mo)…');
-    const res = await fetch(PMTILES_URL, { signal });
-    if (!res.ok) throw new Error(`Carte des voies indisponible (${res.status})`);
-    await cache.put(PMTILES_URL, res);
-  }
-  done++;
-
-  let i = 0;
-  const worker = async () => {
-    while (i < urls.length) {
-      const url = urls[i++];
-      const res = await fetch(url, { signal, cache: 'no-cache' });
-      if (!res.ok) throw new Error(`Fichier indisponible (${res.status})`);
-      await cache.put(url, res);
-      done++;
-      onProgress(done, total, 'Données de repérage…');
-    }
-  };
-  await Promise.all(Array.from({ length: 6 }, worker));
-  onProgress(total, total, 'Terminé');
-}
-
-export async function clearOffline(): Promise<void> {
-  if ('caches' in globalThis) await caches.delete(DATA_CACHE);
-}
-
-export async function storageEstimate(): Promise<{ usage: number; quota: number } | null> {
-  if (!navigator.storage?.estimate) return null;
-  const e = await navigator.storage.estimate();
-  return { usage: e.usage ?? 0, quota: e.quota ?? 0 };
 }

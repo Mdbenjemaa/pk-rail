@@ -1,11 +1,20 @@
 import { useEffect, useRef } from 'react';
-import { addProtocol, Map as MapLibreMap, ScaleControl, setWorkerUrl, type GeoJSONSource, type MapGeoJSONFeature } from 'maplibre-gl';
+import {
+  addProtocol,
+  Map as MapLibreMap,
+  ScaleControl,
+  setWorkerUrl,
+  type GeoJSONSource,
+  type LngLatBoundsLike,
+  type MapGeoJSONFeature,
+  type VectorTileSource,
+} from 'maplibre-gl';
 // MapLibre 6 cherche son worker à côté de son propre fichier : une fois l'appli compilée, on lui donne l'adresse du worker empaqueté par Vite.
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
 import type { FeatureCollection } from 'geojson';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import { PMTiles, Protocol } from 'pmtiles';
-import { ChunkedSource, DATA_URL, OfflineFirstSource, PMTILES_URL } from '../lib/data';
+import { ChunkedSource, DATA_URL, PMTILES_URL, RailTilesSource } from '../lib/data';
 import { PREVIEW } from '../lib/env';
 import type { LonLat } from '../lib/geo';
 import { FILTERS, type Filters } from '../lib/layers';
@@ -13,12 +22,22 @@ import { buildStyle, glyphProtocol, INTERACTIVE_LAYERS, type Basemap, type Overl
 
 setWorkerUrl(workerUrl);
 
-// Protocole PMTiles global, avec une source qui lit d'abord le cache hors-ligne.
+// Protocole PMTiles global, avec une source qui garde les morceaux déjà vus (carte des voies sans réseau).
 const protocol = new Protocol();
 addProtocol('pmtiles', protocol.tile);
-export const railSource = PREVIEW ? new ChunkedSource(`${DATA_URL}rail/`) : new OfflineFirstSource(PMTILES_URL);
+const railSource = PREVIEW ? new ChunkedSource(`${DATA_URL}rail/`) : new RailTilesSource(PMTILES_URL);
 if (PREVIEW) addProtocol('glyph', glyphProtocol);
 protocol.add(new PMTiles(railSource));
+
+/**
+ * Après une coupure de réseau, la bibliothèque PMTiles garde ses échecs en mémoire : on repart d'une
+ * lecture neuve du fichier et la carte redemande ses tuiles des voies.
+ */
+function retryRail(m: MapLibreMap) {
+  protocol.add(new PMTiles(railSource));
+  const src = m.getSource('rail') as VectorTileSource | undefined;
+  src?.setUrl(`pmtiles://${PMTILES_URL}`);
+}
 
 function setSource(m: MapLibreMap | null, id: string, data: FeatureCollection | null) {
   const empty: FeatureCollection = { type: 'FeatureCollection', features: [] };
@@ -31,6 +50,8 @@ function setSource(m: MapLibreMap | null, id: string, data: FeatureCollection | 
 export interface FocusRequest {
   center: LonLat;
   zoom?: number;
+  /** Zone à montrer en entier (une ligne), à la place du centre. */
+  bounds?: [LonLat, LonLat];
   seq: number;
 }
 
@@ -70,11 +91,31 @@ function viewPadding(m: MapLibreMap) {
   };
 }
 
+/** Le bandeau et la fiche du bas cachent une partie de la carte : on centre dans la zone libre. */
+function goTo(m: MapLibreMap, f: FocusRequest, animate: boolean) {
+  const padding = viewPadding(m);
+  if (f.bounds) {
+    // absolutePadding : notre marge remplace celle de la carte (sinon elles s'ajoutent et la ligne ne tient plus).
+    m.fitBounds(f.bounds as LngLatBoundsLike, { padding, absolutePadding: true, maxZoom: 15, duration: animate ? 1200 : 0 });
+    return;
+  }
+  const zoom = f.zoom ?? Math.max(m.getZoom(), 16);
+  if (animate) m.flyTo({ center: f.center, zoom, duration: 1200, padding });
+  else m.jumpTo({ center: f.center, zoom, padding });
+}
+
 export function MapView({ basemap, night, filters, me, target, acces, focus, keepInView, onUserMove, onFeature, onLongPress, onMapTap }: Props) {
   const container = useRef<HTMLDivElement>(null);
   const map = useRef<MapLibreMap | null>(null);
-  const latest = useRef({ night, filters, me, target, acces, onFeature, onLongPress, onMapTap, onUserMove });
-  latest.current = { night, filters, me, target, acces, onFeature, onLongPress, onMapTap, onUserMove };
+  const latest = useRef({ night, filters, me, target, acces, focus, onFeature, onLongPress, onMapTap, onUserMove });
+  latest.current = { night, filters, me, target, acces, focus, onFeature, onLongPress, onMapTap, onUserMove };
+  const appliedFocus = useRef(0);
+  /** Un même recentrage n'est fait qu'une fois (demande arrivée avant ou après le chargement de la carte). */
+  const applyFocus = (m: MapLibreMap, f: FocusRequest, animate: boolean) => {
+    if (f.seq === appliedFocus.current) return;
+    appliedFocus.current = f.seq;
+    goTo(m, f, animate);
+  };
   const overlays = (): Overlays => ({ me: latest.current.me, target: latest.current.target, acces: latest.current.acces });
   const syncOverlays = (m: MapLibreMap) => {
     const o = overlays();
@@ -100,12 +141,17 @@ export function MapView({ basemap, night, filters, me, target, acces, focus, kee
         dragRotate: false,
       });
       m = created;
+      // Tests automatiques (navigateur piloté) : accès à la carte pour viser un point précis.
+      if (navigator.webdriver) (window as Window & { __pkrMap?: MapLibreMap }).__pkrMap = created;
       created.touchZoomRotate.disableRotation();
       created.addControl(new ScaleControl({ unit: 'metric' }), 'bottom-left');
       map.current = created;
       // Le style a été préparé avant la création : on y remet les points arrivés entre-temps.
       created.once('load', () => {
         syncOverlays(created);
+        // Recentrage demandé pendant que la carte se préparait.
+        const f = latest.current.focus;
+        if (f) applyFocus(created, f, false);
         // Les crédits s'ouvrent au démarrage : on les replie vite (bouton « i ») pour libérer la carte.
         setTimeout(() => {
           const attrib = container.current?.querySelector('.maplibregl-ctrl-attrib');
@@ -151,6 +197,32 @@ export function MapView({ basemap, night, filters, me, target, acces, focus, kee
       created.on('dragstart', userGesture);
       created.on('zoomstart', userGesture);
       created.on('contextmenu', (e) => latest.current.onLongPress([e.lngLat.lng, e.lngLat.lat]));
+
+      // Tuiles indisponibles (pas de réseau) : pas d'alerte, mais on réessaie quand le réseau revient.
+      let railFailed = false;
+      const warned = new Set<string>();
+      created.on('error', (ev) => {
+        const e = ev as unknown as { error?: Error; sourceId?: string };
+        if (e.sourceId === 'rail') railFailed = true;
+        const msg = e.error?.message ?? 'erreur de carte';
+        if (!warned.has(msg)) {
+          warned.add(msg);
+          console.warn('Carte :', msg);
+        }
+      });
+      const retry = () => {
+        if (!railFailed || document.visibilityState !== 'visible' || navigator.onLine === false) return;
+        railFailed = false;
+        retryRail(created);
+      };
+      window.addEventListener('online', retry);
+      document.addEventListener('visibilitychange', retry);
+      const retryTimer = setInterval(retry, 30_000);
+      created.once('remove', () => {
+        window.removeEventListener('online', retry);
+        document.removeEventListener('visibilitychange', retry);
+        clearInterval(retryTimer);
+      });
     })();
     return () => {
       cancelled = true;
@@ -201,19 +273,10 @@ export function MapView({ basemap, night, filters, me, target, acces, focus, kee
   useEffect(() => setSource(map.current, 'target', target), [target]);
   useEffect(() => setSource(map.current, 'acces', acces), [acces]);
 
-  // Recentrage demandé.
+  // Recentrage demandé (si la carte n'est pas encore prête, il se fera à son chargement).
   useEffect(() => {
-    if (!focus) return;
-    // Le bandeau et la fiche du bas cachent une partie de la carte : on centre dans la zone libre.
-    const go = () =>
-      map.current?.flyTo({
-        center: focus.center,
-        zoom: focus.zoom ?? Math.max(map.current.getZoom(), 16),
-        duration: 1200,
-        padding: viewPadding(map.current),
-      });
-    if (map.current) go();
-    else setTimeout(go, 800);
+    if (focus && map.current) applyFocus(map.current, focus, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focus]);
 
   // Suivi : la carte reste où elle est tant que le point est bien visible, sinon elle le ramène au centre.

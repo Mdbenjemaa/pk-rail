@@ -10,7 +10,23 @@ const preview = process.env.VITE_PREVIEW === '1';
 export default defineConfig({
   base: preview ? './' : base,
   define: { __BUILD__: JSON.stringify(new Date().toISOString()) },
-  build: preview ? { outDir: 'dist-preview', copyPublicDir: false } : undefined,
+  build: {
+    ...(preview ? { outDir: 'dist-preview', copyPublicDir: false } : {}),
+    // MapLibre seul pèse ≈ 1 Mo (290 Ko compressé) : c'est attendu, pas un oubli de découpage.
+    chunkSizeWarningLimit: 1100,
+    rolldownOptions: {
+      output: {
+        // La carte (MapLibre) et les bibliothèques à part : à chaque mise à jour de l'appli, le téléphone ne
+        // retélécharge que le petit fichier de l'appli (≈ 200 Ko au lieu de 1,4 Mo).
+        codeSplitting: {
+          groups: [
+            { name: 'maplibre', test: /node_modules[\\/]maplibre-gl/ },
+            { name: 'vendor', test: /node_modules/ },
+          ],
+        },
+      },
+    },
+  },
   plugins: [
     react(),
     // Aperçu sans service worker : module d'enregistrement vide.
@@ -23,7 +39,6 @@ export default defineConfig({
       registerType: 'autoUpdate',
       // Enregistrement fait dans main.tsx : l'appli se recharge seule dès qu'une nouvelle version est installée.
       injectRegister: false,
-      includeAssets: ['apple-touch-icon.png', 'fonts/**/*.pbf'],
       manifest: {
         name: 'PK Rail',
         short_name: 'PK Rail',
@@ -42,8 +57,10 @@ export default defineConfig({
         ],
       },
       workbox: {
-        // L'appli elle-même est précachée ; les données sont gardées au fil de l'usage.
-        globPatterns: ['**/*.{js,css,html,png,svg,pbf}'],
+        // L'appli elle-même est précachée. Les données (cases, fiches de ligne, carte des voies) sont gardées
+        // par l'appli elle-même au fil de l'usage (src/lib/data.ts), même avant que le service worker soit actif.
+        // Planche des dessins de signaux (rfn.json) comprise : sans elle, plus de signaux sur la carte hors réseau.
+        globPatterns: ['**/*.{js,css,html,png,svg,pbf}', 'signaux/*.json'],
         globIgnores: ['data/**'],
         // La nouvelle version prend la main tout de suite (l'appli se recharge alors toute seule).
         clientsClaim: true,
@@ -51,17 +68,6 @@ export default defineConfig({
         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
         navigateFallbackDenylist: [/\/data\//],
         runtimeCaching: [
-          {
-            // Cases de localisation, fiches de ligne, index des gares.
-            urlPattern: ({ url }) => /\/data\/(cells|lines)\/|\/data\/gares\.json$/.test(url.pathname),
-            handler: 'CacheFirst',
-            options: { cacheName: 'pkr-data' },
-          },
-          {
-            urlPattern: ({ url }) => url.pathname.endsWith('/data/manifest.json'),
-            handler: 'NetworkFirst',
-            options: { cacheName: 'pkr-data', networkTimeoutSeconds: 4 },
-          },
           {
             // Fond de carte OpenFreeMap (style, tuiles, sprites).
             urlPattern: ({ url }) => url.hostname === 'tiles.openfreemap.org',
