@@ -426,10 +426,10 @@ export function Disclaimer({ onAccept }: { onAccept: () => void }) {
 
 const LAYER_TITLE: Record<string, string> = {
   'r-gares': 'Gare', 'r-pn': 'Passage à niveau', 'r-sst': 'Sous-station', 'r-ouvrages': 'Ouvrage',
-  'r-bornes': 'Borne kilométrique (OpenStreetMap)', 'r-pk-km': 'PK calculé', 'r-pk-hm': 'PK calculé',
-  'r-sig-carre': 'Signal (OpenStreetMap)', 'r-sig-avert': 'Signal (OpenStreetMap)', 'r-sig-vitesse': 'Pancarte (OpenStreetMap)',
-  'r-sig-elec': 'Signal électrique (OpenStreetMap)', 'r-sig-autre': 'Signal (OpenStreetMap)', 'r-quais': 'Quai',
-  'r-voies': 'Voie', 'r-tunnels': 'Tunnel (OpenStreetMap)', 'r-lignes': 'Ligne', 'r-lignes-autres': 'Ligne',
+  'r-pk-km': 'PK calculé', 'r-pk-hm': 'PK calculé',
+  'r-sig-carre': 'Signal', 'r-sig-avert': 'Signal', 'r-sig-vitesse': 'Pancarte',
+  'r-sig-elec': 'Signal électrique', 'r-sig-autre': 'Signal', 'r-quais': 'Quai',
+  'r-voies': 'Voie', 'r-tunnels': 'Tunnel', 'r-lignes': 'Ligne', 'r-lignes-autres': 'Ligne',
   'u-acces': 'Accès (importé)', 'u-target': 'Destination',
 };
 
@@ -447,7 +447,6 @@ export function FeatureCard(p: {
   const title = LAYER_TITLE[layer.replace(/-ic$/, '')] ?? 'Élément';
   let name = pr.n ?? pr.l ?? '';
   if (layer.startsWith('r-pk')) name = `PK ${pr.p}`;
-  if (layer === 'r-bornes') name = `Borne ${pr.p}`;
   if (layer === 'r-voies') name = pr.n ? `Voie ${pr.n}` : 'Voie sans nom';
   if (layer.startsWith('r-lignes')) name = `Ligne ${fmtLine(pr.c ?? '')}`;
   const lineName = pr.c ? p.manifest?.lines[pr.c]?.n : null;

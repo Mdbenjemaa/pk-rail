@@ -3,7 +3,6 @@ export type FilterKey =
   | 'signalements'
   | 'acces'
   | 'pk'
-  | 'bornes'
   | 'gares'
   | 'quais'
   | 'voies'
@@ -23,7 +22,7 @@ export interface FilterDef {
   key: FilterKey;
   label: string;
   hint?: string;
-  group: 'Mes données' | 'Repères' | 'Infrastructure' | 'Signalisation (OpenStreetMap)' | 'Caractéristiques de ligne';
+  group: 'Mes données' | 'Repères' | 'Infrastructure' | 'Signalisation' | 'Caractéristiques de ligne';
   on: boolean;
   /** Couches de la carte concernées. */
   layers: string[];
@@ -35,7 +34,6 @@ export const FILTERS: FilterDef[] = [
   { key: 'signalements', label: 'Mes signalements', hint: 'Anomalies signalées depuis ce téléphone', group: 'Mes données', on: true, layers: ['u-signal', 'u-signal-label'], kinds: [] },
   { key: 'acces', label: 'Mes accès (importés)', hint: 'Carte d’accès importée sur ce téléphone', group: 'Mes données', on: true, layers: ['u-acces', 'u-acces-label'], kinds: ['acces'] },
   { key: 'pk', label: 'PK calculés', hint: 'Tous les 100 m, recalés sur les repères SNCF et les bornes relevées', group: 'Repères', on: true, layers: ['r-pk-km', 'r-pk-km-label', 'r-pk-hm', 'r-pk-hm-label'], kinds: [] },
-  { key: 'bornes', label: 'Bornes kilométriques (OSM)', hint: 'Bornes réelles relevées par les contributeurs', group: 'Repères', on: false, layers: ['r-bornes', 'r-bornes-label'], kinds: [] },
   { key: 'gares', label: 'Gares', group: 'Infrastructure', on: true, layers: ['r-gares', 'r-gares-label'], kinds: ['gare'] },
   { key: 'quais', label: 'Quais', group: 'Infrastructure', on: true, layers: ['r-quais', 'r-quais-label'], kinds: ['quai'] },
   { key: 'voies', label: 'Voies et numéros de voie', group: 'Infrastructure', on: true, layers: ['r-voies', 'r-voies-label'], kinds: [] },
@@ -43,11 +41,11 @@ export const FILTERS: FilterDef[] = [
   { key: 'tunnels', label: 'Tunnels', group: 'Infrastructure', on: true, layers: ['r-tunnels', 'r-tunnels-label'], kinds: ['tunnel'] },
   { key: 'ouvrages', label: 'Ponts-route, passerelles, souterrains', group: 'Infrastructure', on: false, layers: ['r-ouvrages', 'r-ouvrages-label'], kinds: ['pont', 'passerelle', 'souterrain', 'traversee'] },
   { key: 'sst', label: 'Sous-stations', group: 'Infrastructure', on: true, layers: ['r-sst', 'r-sst-label'], kinds: ['sst'] },
-  { key: 'carres', label: 'Carrés, sémaphores, carrés violets', group: 'Signalisation (OpenStreetMap)', on: true, layers: ['r-sig-carre', 'r-sig-carre-label'], kinds: ['sig_carre'] },
-  { key: 'avert', label: 'Avertissements, mirlitons', group: 'Signalisation (OpenStreetMap)', on: false, layers: ['r-sig-avert', 'r-sig-avert-label'], kinds: ['sig_avert'] },
-  { key: 'tiv', label: 'Pancartes de vitesse (TIV, Z, R)', group: 'Signalisation (OpenStreetMap)', on: true, layers: ['r-sig-vitesse', 'r-sig-vitesse-label'], kinds: ['sig_vitesse'] },
-  { key: 'sigelec', label: 'Signaux électriques (coupez courant…)', group: 'Signalisation (OpenStreetMap)', on: false, layers: ['r-sig-elec', 'r-sig-elec-label'], kinds: ['sig_elec'] },
-  { key: 'sigautres', label: 'Autres signaux', group: 'Signalisation (OpenStreetMap)', on: false, layers: ['r-sig-autre', 'r-sig-autre-label'], kinds: ['sig_autre'] },
+  { key: 'carres', label: 'Carrés, sémaphores, carrés violets', group: 'Signalisation', on: true, layers: ['r-sig-carre', 'r-sig-carre-label'], kinds: ['sig_carre'] },
+  { key: 'avert', label: 'Avertissements, mirlitons', group: 'Signalisation', on: false, layers: ['r-sig-avert', 'r-sig-avert-label'], kinds: ['sig_avert'] },
+  { key: 'tiv', label: 'Pancartes de vitesse (TIV, Z, R)', group: 'Signalisation', on: true, layers: ['r-sig-vitesse', 'r-sig-vitesse-label'], kinds: ['sig_vitesse'] },
+  { key: 'sigelec', label: 'Signaux électriques (coupez courant…)', group: 'Signalisation', on: false, layers: ['r-sig-elec', 'r-sig-elec-label'], kinds: ['sig_elec'] },
+  { key: 'sigautres', label: 'Autres signaux', group: 'Signalisation', on: false, layers: ['r-sig-autre', 'r-sig-autre-label'], kinds: ['sig_autre'] },
   { key: 'vitesse', label: 'Vitesse maximale (couleurs)', group: 'Caractéristiques de ligne', on: false, layers: ['r-vitesse'], kinds: [] },
   { key: 'elec', label: 'Électrification (couleurs)', group: 'Caractéristiques de ligne', on: false, layers: ['r-elec'], kinds: [] },
 ];

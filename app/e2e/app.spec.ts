@@ -128,14 +128,15 @@ test('couches et fond de carte : les choix restent après un rechargement', asyn
   await openApp(page);
   await page.getByRole('button', { name: 'Couches et fond de carte' }).click();
   const sheet = page.getByRole('dialog', { name: 'Couches' });
-  const bornes = sheet.getByRole('checkbox', { name: /Bornes kilométriques/ });
-  await expect(bornes).not.toBeChecked();
-  await bornes.check();
+  const avert = sheet.getByRole('checkbox', { name: /Avertissements, mirlitons/ });
+  await expect(avert).not.toBeChecked();
+  await avert.check();
   await sheet.getByRole('button', { name: 'Aucun (hors-ligne)' }).click();
   await sheet.getByRole('button', { name: 'Fermer' }).click();
   await page.reload();
   await page.getByRole('button', { name: 'Couches et fond de carte' }).click();
-  await expect(sheet.getByRole('checkbox', { name: /Bornes kilométriques/ })).toBeChecked();
+  await expect(sheet.getByRole('checkbox', { name: /Avertissements, mirlitons/ })).toBeChecked();
+  await expect(sheet.getByRole('checkbox', { name: /Bornes kilométriques/ })).toHaveCount(0);
   await expect(sheet.getByRole('button', { name: 'Aucun (hors-ligne)' })).toHaveClass(/on/);
 });
 

@@ -159,8 +159,6 @@ export function railLayers(basemap: Basemap, filters: Filters, night = false): L
     { id: 'r-pk-km-label', type: 'symbol', source: 'rail', 'source-layer': 'pk_km', minzoom: 11, layout: { visibility: vis('pk'), 'text-field': ['concat', 'PK ', ['get', 'p']], ...text(12, true), 'text-offset': [0, -1.1], 'text-anchor': 'bottom', 'text-optional': true }, paint: { 'text-color': '#111827', 'text-halo-color': '#facc15', 'text-halo-width': 2 } },
     { id: 'r-pk-hm', type: 'circle', source: 'rail', 'source-layer': 'pk_hm', minzoom: 14.5, layout: { visibility: vis('pk') }, paint: { 'circle-radius': 2, 'circle-color': '#fde68a', 'circle-stroke-color': '#111827', 'circle-stroke-width': 0.8 } },
     { id: 'r-pk-hm-label', type: 'symbol', source: 'rail', 'source-layer': 'pk_hm', minzoom: 15.5, layout: { visibility: vis('pk'), 'text-field': ['get', 'p'], ...text(11), 'text-offset': [0, -0.9], 'text-anchor': 'bottom', 'text-optional': true }, paint: paintText },
-    { id: 'r-bornes', type: 'circle', source: 'rail', 'source-layer': 'bornes', minzoom: 13, layout: { visibility: vis('bornes') }, paint: { 'circle-radius': 4, 'circle-color': '#ffffff', 'circle-stroke-color': '#16a34a', 'circle-stroke-width': 2 } },
-    { id: 'r-bornes-label', type: 'symbol', source: 'rail', 'source-layer': 'bornes', minzoom: 14, layout: { visibility: vis('bornes'), 'text-field': ['concat', 'Borne ', ['get', 'p']], ...text(11), 'text-offset': [0, 1], 'text-anchor': 'top', 'text-optional': true }, paint: { ...paintText, 'text-color': pick('#15803d', '#86efac', '#bbf7d0') } },
     { id: 'r-ouvrages', type: 'circle', source: 'rail', 'source-layer': 'ouvrages', minzoom: 12, layout: { visibility: vis('ouvrages') }, paint: { 'circle-radius': ['interpolate', ['linear'], ['zoom'], 12, 2.5, 16, 5], 'circle-color': '#a8a29e', 'circle-stroke-color': '#44403c', 'circle-stroke-width': 1 } },
     { id: 'r-ouvrages-label', type: 'symbol', source: 'rail', 'source-layer': 'ouvrages', minzoom: 15, layout: { visibility: vis('ouvrages'), 'text-field': ['get', 'n'], ...text(11), 'text-offset': [0, 1], 'text-anchor': 'top', 'text-optional': true }, paint: paintText },
     { id: 'r-pn', type: 'circle', source: 'rail', 'source-layer': 'pn', minzoom: 11, layout: { visibility: vis('pn') }, paint: { 'circle-radius': ['interpolate', ['linear'], ['zoom'], 11, 3, 16, 7], 'circle-color': '#f59e0b', 'circle-stroke-color': '#78350f', 'circle-stroke-width': 1.5 } },
@@ -179,7 +177,7 @@ export function railLayers(basemap: Basemap, filters: Filters, night = false): L
 
 export const INTERACTIVE_LAYERS = [
   'u-target', 'u-signal', 'u-acces',
-  'r-gares', 'r-pn', 'r-sst', 'r-ouvrages', 'r-bornes', 'r-pk-km', 'r-pk-hm',
+  'r-gares', 'r-pn', 'r-sst', 'r-ouvrages', 'r-pk-km', 'r-pk-hm',
   'r-sig-carre-ic', 'r-sig-avert-ic', 'r-sig-vitesse-ic', 'r-sig-elec-ic', 'r-sig-autre-ic',
   'r-sig-carre', 'r-sig-avert', 'r-sig-vitesse', 'r-sig-elec', 'r-sig-autre',
   'r-quais', 'r-voies', 'r-tunnels', 'r-lignes', 'r-lignes-autres',
