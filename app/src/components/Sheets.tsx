@@ -9,6 +9,7 @@ import { searchAcces } from '../lib/search';
 import { NavLinks } from './TargetSheet';
 import { RFN_CREDIT, RFN_URL, signalImage, SIGNAL_ICONS } from '../lib/signaux';
 import { InstallSteps, useInstallMode } from './Install';
+import { useDragDown } from './drag';
 import { Icon } from './parts';
 import type { Theme } from './state';
 import { MyMapsLink } from './MyMapsLink';
@@ -17,15 +18,23 @@ import type { LonLat } from '../lib/geo';
 import { FILTERS, type FilterKey, type Filters } from '../lib/layers';
 import type { Basemap } from '../map/style';
 
+/**
+ * Fenêtre qui monte du bas, comme sur iOS ou Instagram : poignée en haut, et on la ferme en la faisant
+ * glisser vers le bas (par le haut : le contenu, lui, défile), en touchant le fond, ou avec ×.
+ */
 export function Modal({ title, onClose, children, side }: { title: string; onClose: () => void; children: React.ReactNode; side?: boolean }) {
+  const [dragRef, dragProps] = useDragDown<HTMLDivElement>(onClose, !side);
   return (
     <div className={`modal-back ${side ? 'side' : ''}`} onClick={onClose}>
-      <div className="modal" role="dialog" aria-label={title} onClick={(e) => e.stopPropagation()}>
-        <div className="modal-head">
-          <h2>{title}</h2>
-          <button className="icon-btn" onClick={onClose} aria-label="Fermer">
-            ×
-          </button>
+      <div className="modal" ref={dragRef} role="dialog" aria-label={title} onClick={(e) => e.stopPropagation()}>
+        <div className="modal-top" {...dragProps}>
+          <div className="grip" aria-hidden="true" />
+          <div className="modal-head">
+            <h2>{title}</h2>
+            <button className="icon-btn" onClick={onClose} aria-label="Fermer">
+              ×
+            </button>
+          </div>
         </div>
         <div className="modal-body">{children}</div>
       </div>
@@ -193,7 +202,10 @@ export function AccesSheet(p: {
           Afficher mes accès sur la carte
           <small>Points verts avec leur nom. Chaque liste s’active ou se désactive avec son bouton.</small>
         </span>
-        <input type="checkbox" checked={p.shown} onChange={p.onToggleShown} />
+        <span className="switch green">
+          <input type="checkbox" checked={p.shown} onChange={p.onToggleShown} />
+          <span className="switch-ui" aria-hidden="true" />
+        </span>
       </label>
       {total > 0 && (
         <>
@@ -265,7 +277,10 @@ export function FilterSheet(p: {
                 {f.label}
                 {f.hint && <small>{f.hint}</small>}
               </span>
-              <input type="checkbox" checked={p.filters[f.key]} onChange={() => p.onToggle(f.key)} />
+              <span className="switch">
+                <input type="checkbox" checked={p.filters[f.key]} onChange={() => p.onToggle(f.key)} />
+                <span className="switch-ui" aria-hidden="true" />
+              </span>
             </label>
           ))}
         </div>

@@ -3,6 +3,7 @@ import {
   addProtocol,
   Map as MapLibreMap,
   ScaleControl,
+  AttributionControl,
   setWorkerUrl,
   type GeoJSONSource,
   type LngLatBoundsLike,
@@ -199,7 +200,8 @@ export function MapView({
         style,
         bounds: [[-5.2, 41.3], [9.6, 51.2]],
         fitBoundsOptions: { padding: 20 },
-        attributionControl: { compact: true },
+        // Crédits (« i ») ajoutés plus bas, à gauche au-dessus de l'échelle : la colonne de droite reste aux boutons.
+        attributionControl: false,
         maxPitch: 0,
         dragRotate: false,
       });
@@ -215,6 +217,7 @@ export function MapView({
         latest.current.onUserRotate?.();
       });
       created.addControl(new ScaleControl({ unit: 'metric' }), 'bottom-left');
+      created.addControl(new AttributionControl({ compact: true }), 'bottom-left');
       map.current = created;
       // Le style a été préparé avant la création : on y remet les points arrivés entre-temps.
       created.once('load', () => {

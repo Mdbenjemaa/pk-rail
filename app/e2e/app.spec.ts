@@ -432,3 +432,70 @@ test('deux doigts : la carte tourne, garde son angle, et le bouton remet le nord
   expect(apart(after, 0)).toBeGreaterThan(20);
   expect(apart(after, 270)).toBeGreaterThan(20);
 });
+
+/** Un doigt qui glisse verticalement (vrai geste tactile). */
+async function touchDrag(page: import('@playwright/test').Page, x: number, y: number, dy: number, steps = 12) {
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y, id: 1 }] });
+  for (let i = 1; i <= steps; i++) {
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchMove', touchPoints: [{ x, y: y + (dy * i) / steps, id: 1 }] });
+    await page.waitForTimeout(16);
+  }
+  await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  await cdp.detach();
+}
+
+test('fiche « Autour de toi » : se réduit (bouton ou glisser vers le bas), le choix reste, et se rouvre', async ({ page }) => {
+  await openApp(page);
+  await locate(page);
+  const card = page.getByRole('region', { name: 'Autour de toi' });
+  const mini = page.getByRole('button', { name: /^Agrandir la fiche : Autour de toi, .+, (\d+ m|[\d,]+ km|ici)$/ });
+  await expect(card).toBeVisible();
+
+  // Bouton ⌄ : la fiche devient une capsule avec l'élément le plus proche.
+  await page.getByRole('button', { name: 'Réduire la fiche' }).click();
+  await expect(mini).toBeVisible();
+  await expect(card).toHaveCount(0);
+
+  // Le choix reste après un rechargement.
+  await page.reload();
+  await locate(page);
+  await expect(mini).toBeVisible();
+  await expect(card).toHaveCount(0);
+
+  // Un toucher la rouvre.
+  await mini.click();
+  await expect(card).toBeVisible();
+
+  // Un petit glissé ne la ferme pas…
+  const box = (await card.getByText('Autour de toi', { exact: true }).boundingBox())!;
+  await touchDrag(page, box.x + 10, box.y + 5, 30, 15);
+  await page.waitForTimeout(300);
+  await expect(card).toBeVisible();
+  // … un vrai glissé vers le bas la réduit.
+  await touchDrag(page, box.x + 10, box.y + 5, 220);
+  await expect(mini).toBeVisible();
+  await expect(card).toHaveCount(0);
+});
+
+test('fenêtres : poignée en haut, on les ferme en les faisant glisser vers le bas', async ({ page }) => {
+  await openApp(page);
+  await page.getByRole('button', { name: 'Couches et fond de carte' }).click();
+  const sheet = page.getByRole('dialog', { name: 'Couches' });
+  await expect(sheet).toBeVisible();
+  const title = (await sheet.getByRole('heading', { name: 'Couches' }).boundingBox())!;
+  // Petit glissé : la fenêtre revient en place.
+  await touchDrag(page, title.x + 20, title.y + 10, 40, 15);
+  await page.waitForTimeout(300);
+  await expect(sheet).toBeVisible();
+  expect(await sheet.evaluate((el) => el.style.transform)).toBe('');
+  // Glissé franc vers le bas : elle se ferme.
+  await touchDrag(page, title.x + 20, title.y + 10, 300);
+  await expect(sheet).toHaveCount(0);
+  // Les interrupteurs restent de vraies cases à cocher (clavier, lecture d'écran) et marchent au toucher.
+  await page.getByRole('button', { name: 'Couches et fond de carte' }).click();
+  const gares = page.getByRole('dialog', { name: 'Couches' }).getByRole('checkbox', { name: /^Gares/ });
+  await expect(gares).toBeChecked();
+  await page.getByRole('dialog', { name: 'Couches' }).getByText('Gares', { exact: true }).click();
+  await expect(gares).not.toBeChecked();
+});

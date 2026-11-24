@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { fmtPk } from '../lib/format';
 
 /**
@@ -37,5 +37,10 @@ export function PkCounter({ value, className }: { value: number; className?: str
     raf = requestAnimationFrame(step);
     return () => cancelAnimationFrame(raf);
   }, [value]);
-  return <span className={className}>{fmtPk(shown)}</span>;
+  const text = fmtPk(shown);
+  return (
+    <span className={className} style={{ '--n': String(text.length) } as CSSProperties}>
+      {text}
+    </span>
+  );
 }

@@ -39,6 +39,7 @@ const PATHS: Record<string, ReactNode> = {
   back: <path d="M15 5l-7 7 7 7" {...STROKE} strokeWidth={2.6} />,
   right: <path d="M9 6l6 6-6 6" {...STROKE} strokeWidth={2.6} />,
   down: <path d="M6 9l6 6 6-6" {...STROKE} strokeWidth={2.6} />,
+  chevup: <path d="M6 15l6-6 6 6" {...STROKE} strokeWidth={2.6} />,
   up: <path d="M12 19V5M6 11l6-6 6 6" {...STROKE} strokeWidth={2.6} />,
   dn: <path d="M12 5v14M6 13l6 6 6-6" {...STROKE} strokeWidth={2.6} />,
   here: <circle cx="12" cy="12" r="4.5" fill="currentColor" />,

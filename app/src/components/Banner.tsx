@@ -1,3 +1,4 @@
+import type { CSSProperties } from 'react';
 import type { Manifest } from '../lib/data';
 import { fmtLine, fmtPk } from '../lib/format';
 import { lineChips, shortLineName } from '../lib/lineinfo';
@@ -189,7 +190,9 @@ export function Banner(p: Props) {
         <button className="banner-main" onClick={p.onDetails} aria-label={`PK ${fmtPk(chosen.pk)} : voir les détails de la ligne`}>
           <span className="pk-row">
             <span className="pk-label">PK</span>
-            <span className="pk-digits">{fmtPk(chosen.pk)}</span>
+            <span className="pk-digits" style={{ '--n': String(fmtPk(chosen.pk).length) } as CSSProperties}>
+              {fmtPk(chosen.pk)}
+            </span>
           </span>
           <span className="banner-sub">
             {shortLineName(name)} · {track ? `voie ${track.name} à ${Math.round(track.dist)} m` : `à ${Math.round(chosen.dist)} m de l’axe`}

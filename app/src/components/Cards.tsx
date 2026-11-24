@@ -1,11 +1,62 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { fmtDist, fmtPk } from '../lib/format';
 import { KIND_BADGE } from '../lib/layers';
 import type { Around, AroundItem } from '../lib/nearby';
 import { pkText } from './hooks';
+import { useDragDown } from './drag';
 import { Badge, Icon } from './parts';
 
 type Focus = (at: [number, number]) => void;
+
+/** Fiche du bas réduite ou non (le choix est gardé). */
+interface Fold {
+  folded: boolean;
+  onFold: (folded: boolean) => void;
+}
+
+function FoldButton({ onFold }: { onFold: () => void }) {
+  return (
+    <button className="icon-btn fold-btn" onClick={onFold} aria-label="Réduire la fiche">
+      <Icon name="down" size={22} />
+    </button>
+  );
+}
+
+/**
+ * Fiche réduite : une ligne avec l'élément le plus proche et sa distance. Un toucher, ou un glissé vers
+ * le haut, la rouvre.
+ */
+function MiniCard({ eyebrow, item, accent, onOpen }: { eyebrow: string; item: { label: string; dist: string } | null; accent?: boolean; onOpen: () => void }) {
+  const y0 = useRef<number | null>(null);
+  return (
+    <button
+      className="ucard-mini"
+      onClick={onOpen}
+      onPointerDown={(e) => (y0.current = e.clientY)}
+      onPointerUp={(e) => {
+        if (y0.current !== null && y0.current - e.clientY > 24) onOpen();
+        y0.current = null;
+      }}
+      aria-label={`Agrandir la fiche : ${eyebrow}${item ? `, ${item.label}, ${item.dist}` : ''}`}
+    >
+      <span className="mini-chev" aria-hidden="true">
+        <Icon name="chevup" size={20} />
+      </span>
+      <span className="mini-main">
+        <small>{eyebrow}</small>
+        <b>{item ? item.label : 'Rien dans les 15 km'}</b>
+      </span>
+      {item && <span className={`mini-dist${accent ? ' accent' : ''}`}>{item.dist}</span>}
+    </button>
+  );
+}
+
+/** Le plus proche : l'élément où l'on se trouve, sinon le plus près des deux côtés. */
+function nearest(inside: AroundItem | undefined, a: AroundItem | undefined, b: AroundItem | undefined) {
+  if (inside) return { label: inside.label, dist: 'ici' };
+  const n = a && b ? (a.dist <= b.dist ? a : b) : (a ?? b);
+  return n ? { label: n.label, dist: fmtDist(n.dist) } : null;
+}
 
 /** Une ligne de la fiche : sens, dessin, nom, PK, distance. */
 function NearRow({ it, dir, onFocus }: { it: AroundItem; dir: 1 | -1 | 0; onFocus: Focus }) {
@@ -35,15 +86,21 @@ function AllButton({ onAll }: { onAll: () => void }) {
 }
 
 /** Repéré : le plus proche dans chaque sens (selon les filtres), et « Tout voir ». */
-export function AroundCard({ around, onFocus, onAll }: { around: Around; onFocus: Focus; onAll: () => void }) {
+export function AroundCard({ around, onFocus, onAll, folded, onFold }: { around: Around; onFocus: Focus; onAll: () => void } & Fold) {
   const inside = around.inside[0];
   const up = around.ahead[0];
   const down = around.behind[0];
+  const [dragRef, dragProps] = useDragDown<HTMLElement>(() => onFold(true));
+  if (folded) return <MiniCard eyebrow="Autour de toi" item={nearest(inside, up, down)} onOpen={() => onFold(false)} />;
   return (
-    <section className="ucard" aria-label="Autour de toi">
+    <section className="ucard foldable" aria-label="Autour de toi" ref={dragRef} {...dragProps}>
+      <div className="grip" aria-hidden="true" />
       <div className="ucard-head">
         <span className="ucard-eyebrow">Autour de toi</span>
-        <AllButton onAll={onAll} />
+        <span className="ucard-actions">
+          <AllButton onAll={onAll} />
+          <FoldButton onFold={() => onFold(true)} />
+        </span>
       </div>
       {inside && <NearRow it={inside} dir={0} onFocus={onFocus} />}
       {up && <NearRow it={up} dir={1} onFocus={onFocus} />}
@@ -57,7 +114,7 @@ export function AroundCard({ around, onFocus, onAll }: { around: Around; onFocus
  * Suivi : le prochain élément dans le sens de marche, avec la distance qui diminue et une barre d'approche,
  * puis le suivant. À l'arrêt (sens inconnu), le plus proche de chaque côté.
  */
-export function NextCard({ around, dir, onFocus, onAll }: { around: Around; dir: 1 | -1 | 0; onFocus: Focus; onAll: () => void }) {
+export function NextCard({ around, dir, onFocus, onAll, folded, onFold }: { around: Around; dir: 1 | -1 | 0; onFocus: Focus; onAll: () => void } & Fold) {
   const list = dir === 1 ? around.ahead : dir === -1 ? around.behind : null;
   const next = list?.[0] ?? null;
   const then = list?.[1] ?? null;
@@ -67,13 +124,32 @@ export function NextCard({ around, dir, onFocus, onAll }: { around: Around; dir:
   if (start.key !== key) setStart({ key, d: next?.dist ?? 0 });
   const base = start.key === key ? start.d : (next?.dist ?? 0);
   const pct = next && base > 1 ? Math.max(0, Math.min(100, (1 - next.dist / base) * 100)) : 0;
+  const [dragRef, dragProps] = useDragDown<HTMLElement>(() => onFold(true));
+  const kind = next ? (KIND_BADGE[next.kind]?.name ?? '') : '';
+
+  if (folded) {
+    return list ? (
+      <MiniCard
+        eyebrow={`Prochain${kind ? ` · ${kind}` : ''}`}
+        item={next && { label: next.label, dist: fmtDist(next.dist) }}
+        accent
+        onOpen={() => onFold(false)}
+      />
+    ) : (
+      <MiniCard eyebrow="Autour de toi" item={nearest(undefined, around.ahead[0], around.behind[0])} onOpen={() => onFold(false)} />
+    );
+  }
 
   if (!list) {
     return (
-      <section className="ucard" aria-label="Autour de toi">
+      <section className="ucard foldable" aria-label="Autour de toi" ref={dragRef} {...dragProps}>
+        <div className="grip" aria-hidden="true" />
         <div className="ucard-head">
           <span className="ucard-eyebrow">Autour de toi</span>
-          <AllButton onAll={onAll} />
+          <span className="ucard-actions">
+            <AllButton onAll={onAll} />
+            <FoldButton onFold={() => onFold(true)} />
+          </span>
         </div>
         {around.ahead[0] && <NearRow it={around.ahead[0]} dir={1} onFocus={onFocus} />}
         {around.behind[0] && <NearRow it={around.behind[0]} dir={-1} onFocus={onFocus} />}
@@ -82,12 +158,15 @@ export function NextCard({ around, dir, onFocus, onAll }: { around: Around; dir:
     );
   }
 
-  const kind = next ? (KIND_BADGE[next.kind]?.name ?? '') : '';
   return (
-    <section className="ucard next-card" aria-label="Prochain élément sur ta route">
+    <section className="ucard next-card foldable" aria-label="Prochain élément sur ta route" ref={dragRef} {...dragProps}>
+      <div className="grip" aria-hidden="true" />
       <div className="ucard-head">
         <span className="ucard-eyebrow">Prochain{kind ? ` · ${kind}` : ''}</span>
-        <AllButton onAll={onAll} />
+        <span className="ucard-actions">
+          <AllButton onAll={onAll} />
+          <FoldButton onFold={() => onFold(true)} />
+        </span>
       </div>
       {next ? (
         <>
